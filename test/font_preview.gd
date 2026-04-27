@@ -46,6 +46,7 @@ func _load_font_preview_level() -> void:
 	scene.active_order.append("明清小说")
 	scene.active_order.append("水果")
 	scene.selected.clear()
+	scene.menu_active = false
 	scene.steps_left = 120
 	scene.game_over = false
 	scene.status_text = "font preview"

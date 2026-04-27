@@ -10,6 +10,8 @@ func _initialize() -> void:
 	scene = load("res://scenes/main.tscn").instantiate()
 	root.add_child(scene)
 	scene._ready()
+	scene.menu_active = false
+	scene._render()
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--draw-count="):
 			draw_count = int(arg.get_slice("=", 1))

@@ -56,6 +56,7 @@ func _load_controlled_category_level() -> void:
 	scene.active_categories.clear()
 	scene.active_order.clear()
 	scene.selected.clear()
+	scene.menu_active = false
 	scene.steps_left = 120
 	scene.game_over = false
 	scene.status_text = "category card no absorb test"

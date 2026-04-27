@@ -10,6 +10,8 @@ func _initialize() -> void:
 	scene = load("res://scenes/main.tscn").instantiate()
 	root.add_child(scene)
 	scene._ready()
+	scene.menu_active = false
+	scene._render()
 	starting_deck_size = scene.deck.size()
 
 
@@ -23,14 +25,17 @@ func _process(_delta: float) -> bool:
 				quit(1)
 			return false
 		starting_deck_size = scene.deck.size()
-		deck_button.pressed.emit()
+		var event := InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = true
+		deck_button.gui_input.emit(event)
 		clicked = true
 		return false
-	if scene.deck_animation_busy:
+	if not scene.draw_flights.is_empty():
 		scene._process(0.05)
-	if frames < 24 and scene.deck_animation_busy:
+	if frames < 24 and not scene.draw_flights.is_empty():
 		return false
-	if scene.deck_animation_busy:
+	if not scene.draw_flights.is_empty():
 		push_error("Deck click smoke failed: draw animation did not finish")
 		quit(1)
 		return false
@@ -42,13 +47,25 @@ func _process(_delta: float) -> bool:
 		push_error("Deck click smoke failed: deck size did not decrease")
 		quit(1)
 		return false
+	var deck_button := _find_deck_button(scene)
+	if deck_button == null:
+		push_error("Deck click smoke failed: deck button disappeared")
+		quit(1)
+		return false
+	if deck_button.scale.distance_to(Vector2.ONE) > 0.01:
+		push_error("Deck click smoke failed: deck button still has click bump animation")
+		quit(1)
+		return false
 	print("DECK_CLICK_SMOKE_PASS")
 	quit(0)
 	return false
 
 
-func _find_deck_button(root_node: Node) -> Button:
+func _find_deck_button(root_node: Node) -> Control:
 	for child in root_node.get_children():
-		if child is Button and String(child.text).begins_with("牌堆"):
+		if child is Control and child.has_meta("deck_button"):
 			return child
+		var nested := _find_deck_button(child)
+		if nested != null:
+			return nested
 	return null

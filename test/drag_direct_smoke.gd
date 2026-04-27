@@ -11,6 +11,8 @@ func _initialize() -> void:
 	scene = load("res://scenes/main.tscn").instantiate()
 	root.add_child(scene)
 	scene._ready()
+	scene.menu_active = false
+	scene._render()
 
 
 func _process(_delta: float) -> bool:

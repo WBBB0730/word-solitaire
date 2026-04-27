@@ -53,6 +53,7 @@ func _load_controlled_absorb_level() -> void:
 	scene.active_categories["水果"] = {"collected": []}
 	scene.active_order.append("水果")
 	scene.selected.clear()
+	scene.menu_active = false
 	scene.steps_left = 120
 	scene.game_over = false
 	scene.status_text = "category absorb test"

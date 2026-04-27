@@ -15,9 +15,29 @@ const CATEGORIES_PER_GAME := 9
 const DRAG_THRESHOLD := 8.0
 const ANIM_TIME := 0.18
 const DRAW_ANIM_TIME := 0.28
+const DRAW_RETARGET_TIME := 0.14
+const CARD_FLIP_FACE_TIME := 0.38
+const WASH_FLIP_FACE_TIME := 0.24
 const DRAG_CANCEL_ANIM_TIME := 0.16
 const CATEGORY_ABSORB_ANIM_TIME := 0.20
 const CATEGORY_ABSORB_FINAL_SCALE := 0.36
+const ROUND_TRANSITION_CLOSE_TIME := 0.48
+const ROUND_TRANSITION_HOLD_TIME := 0.18
+const ROUND_TRANSITION_OPEN_TIME := 0.58
+const ROUND_TRANSITION_SEAM_H := 4.0
+const MUSIC_PATH := "res://assets/audio/background_music.mp3"
+const CARD_FLIP_SFX_PATH := "res://assets/audio/card_flip.wav"
+const BUTTON_CLICK_SFX_PATH := "res://assets/audio/button_click.mp3"
+const SFX_PLAYER_COUNT := 4
+const BUTTON_SFX_PLAYER_COUNT := 3
+const MUSIC_BASE_VOLUME_DB := -8.0
+const SFX_BASE_VOLUME_DB := -1.2
+const MUSIC_TRIM_DB := 0.0
+const CARD_FLIP_SFX_TRIM_DB := -1.4
+const BUTTON_CLICK_SFX_TRIM_DB := -0.6
+const MUSIC_VOLUME_DB := MUSIC_BASE_VOLUME_DB + MUSIC_TRIM_DB
+const CARD_FLIP_SFX_VOLUME_DB := SFX_BASE_VOLUME_DB + CARD_FLIP_SFX_TRIM_DB
+const BUTTON_CLICK_SFX_VOLUME_DB := SFX_BASE_VOLUME_DB + BUTTON_CLICK_SFX_TRIM_DB
 
 var category_pool := {
 	"明清小说": ["水浒传", "红楼梦", "西游记", "三国演义", "金瓶梅", "儒林外史"],
@@ -76,6 +96,7 @@ var columns: Array = []
 var active_categories := {}
 var active_order: Array[String] = []
 var selected := {}
+var menu_active := true
 var steps_left := STARTING_STEPS
 var next_card_id := 1
 var game_over := false
@@ -84,35 +105,60 @@ var previous_card_positions := {}
 var pending_spawn_positions := {}
 var pending_draw_animations := {}
 var animating_draw_cards := {}
+var revealing_board_cards := {}
 var suppress_next_move_animations := {}
 var deck_animation_busy := false
 var draw_animation_nodes := {}
 var draw_animation_cards := {}
 var draw_flights := {}
+var wash_animation_nodes: Array[Control] = []
+var wash_animation_starts: Array[Vector2] = []
+var wash_flight := {}
 var drag_candidate := {}
 var drag_preview: Control
 var drag_offset := Vector2.ZERO
 var returning_drag_preview: Control
 var absorbing_drag_preview: Control
 var pending_absorb_slot := -1
-var deck_click_bump := false
-var deck_press_queued := false
+var round_transition_active := false
+var round_transition_overlay: Control
+var round_transition_tween: Tween
+var pending_round_message := ""
+var music_player: AudioStreamPlayer
+var card_flip_sfx_stream: AudioStream
+var button_click_sfx_stream: AudioStream
+var sfx_players: Array = []
+var button_sfx_players: Array = []
+var next_sfx_player := 0
+var next_button_sfx_player := 0
+var audio_initialized := false
 
 var bg_color := Color("#a9d78e")
+var curtain_color := Color("#94c87c")
 var card_color := Color("#fbfbf4")
 var category_color := Color("#ffe08a")
 var card_border := Color("#161616")
 var back_color := Color("#4d9be8")
 var slot_color := Color(1.0, 1.0, 1.0, 0.20)
+var category_empty_slot_color := Color("#f6d86a", 0.42)
 
 
 func _ready() -> void:
+	_init_audio()
 	randomize()
 	_init_level()
 	_render()
 
 
 func _input(event: InputEvent) -> void:
+	if round_transition_active:
+		return
+	if _is_deck_press_event(event):
+		_handle_deck_pressed()
+		get_viewport().set_input_as_handled()
+		return
+	if menu_active:
+		return
 	if drag_candidate.is_empty():
 		return
 	if event is InputEventMouseMotion:
@@ -123,9 +169,95 @@ func _input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	_update_draw_flights(delta)
+	_update_wash_flight(delta)
+
+
+func _init_audio() -> void:
+	if audio_initialized:
+		return
+	audio_initialized = true
+
+	var music_stream: AudioStream = load(MUSIC_PATH)
+	if music_stream != null:
+		_set_audio_stream_loop(music_stream, true)
+		music_player = AudioStreamPlayer.new()
+		music_player.set_meta("audio_player", true)
+		music_player.name = "MusicPlayer"
+		music_player.stream = music_stream
+		music_player.volume_db = MUSIC_VOLUME_DB
+		add_child(music_player)
+		if music_player.is_inside_tree():
+			music_player.play()
+		else:
+			call_deferred("_play_background_music")
+
+	card_flip_sfx_stream = load(CARD_FLIP_SFX_PATH)
+	for i in range(SFX_PLAYER_COUNT):
+		var player := AudioStreamPlayer.new()
+		player.set_meta("audio_player", true)
+		player.name = "CardFlipSfx" + str(i + 1)
+		player.stream = card_flip_sfx_stream
+		player.volume_db = CARD_FLIP_SFX_VOLUME_DB
+		add_child(player)
+		sfx_players.append(player)
+
+	button_click_sfx_stream = load(BUTTON_CLICK_SFX_PATH)
+	for i in range(BUTTON_SFX_PLAYER_COUNT):
+		var player := AudioStreamPlayer.new()
+		player.set_meta("audio_player", true)
+		player.name = "ButtonClickSfx" + str(i + 1)
+		player.stream = button_click_sfx_stream
+		player.volume_db = BUTTON_CLICK_SFX_VOLUME_DB
+		add_child(player)
+		button_sfx_players.append(player)
+
+
+func _set_audio_stream_loop(stream: AudioStream, enabled: bool) -> void:
+	for property in stream.get_property_list():
+		if property.get("name", "") == "loop":
+			stream.set("loop", enabled)
+			return
+
+
+func _play_background_music() -> void:
+	if is_instance_valid(music_player) and music_player.is_inside_tree() and not music_player.playing:
+		music_player.play()
+
+
+func _play_card_flip_sfx() -> void:
+	if card_flip_sfx_stream == null or sfx_players.is_empty():
+		return
+	var player: AudioStreamPlayer = sfx_players[next_sfx_player % sfx_players.size()]
+	next_sfx_player += 1
+	if not is_instance_valid(player) or not player.is_inside_tree():
+		return
+	player.stop()
+	player.pitch_scale = randf_range(0.97, 1.03)
+	player.play()
+
+
+func _play_button_click_sfx() -> void:
+	if button_click_sfx_stream == null or button_sfx_players.is_empty():
+		return
+	var player: AudioStreamPlayer = button_sfx_players[next_button_sfx_player % button_sfx_players.size()]
+	next_button_sfx_player += 1
+	if not is_instance_valid(player) or not player.is_inside_tree():
+		return
+	player.stop()
+	player.pitch_scale = randf_range(0.98, 1.02)
+	player.play()
+
+
+func _audio_balanced_volume_db(group_volume_db: float, asset_trim_db: float) -> float:
+	return group_volume_db + asset_trim_db
 
 
 func _init_level() -> void:
+	deck.clear()
+	draw_stack.clear()
+	active_categories.clear()
+	active_order.clear()
+	selected.clear()
 	categories = _select_categories_for_game()
 	word_to_category.clear()
 	for category in categories.keys():
@@ -213,9 +345,6 @@ func _deal_board_and_deck(all_cards: Array) -> void:
 	var board_cards: Array = all_cards.slice(0, board_total)
 	deck = all_cards.slice(board_total)
 
-	if not _cards_include_category(board_cards):
-		_swap_category_from_deck_into_board(board_cards)
-
 	for card in board_cards:
 		card["face_up"] = false
 	for card in deck:
@@ -229,26 +358,125 @@ func _deal_board_and_deck(all_cards: Array) -> void:
 			columns[col_idx].append(board_cards[cursor])
 			cursor += 1
 
+	_ensure_bottom_visible_opening_mix()
+
 	for column in columns:
 		if not column.is_empty():
 			column[column.size() - 1]["face_up"] = true
 
 
-func _cards_include_category(cards: Array) -> bool:
-	for card in cards:
-		if card["type"] == "category":
-			return true
-	return false
+func _ensure_bottom_visible_opening_mix() -> void:
+	_ensure_bottom_visible_category()
+	_ensure_bottom_visible_words(2)
 
 
-func _swap_category_from_deck_into_board(board_cards: Array) -> void:
-	for deck_idx in range(deck.size()):
-		var deck_card: Dictionary = deck[deck_idx]
-		if deck_card["type"] == "category":
-			var board_idx: int = randi_range(0, board_cards.size() - 1)
-			deck[deck_idx] = board_cards[board_idx]
-			board_cards[board_idx] = deck_card
+func _ensure_bottom_visible_category() -> void:
+	if _bottom_visible_has_category():
+		return
+	var bottom_columns := _non_empty_column_indices()
+	var hidden_categories := _hidden_category_locations()
+	if bottom_columns.is_empty() or hidden_categories.is_empty():
+		return
+
+	var target_col: int = bottom_columns[randi_range(0, bottom_columns.size() - 1)]
+	var target_idx: int = columns[target_col].size() - 1
+	var target_card: Dictionary = columns[target_col][target_idx]
+	var source: Dictionary = hidden_categories[randi_range(0, hidden_categories.size() - 1)]
+
+	if source["area"] == "deck":
+		var deck_idx: int = source["index"]
+		columns[target_col][target_idx] = deck[deck_idx]
+		deck[deck_idx] = target_card
+	else:
+		var source_col: int = source["col"]
+		var source_idx: int = source["index"]
+		columns[target_col][target_idx] = columns[source_col][source_idx]
+		columns[source_col][source_idx] = target_card
+
+
+func _ensure_bottom_visible_words(min_word_count: int) -> void:
+	while _bottom_visible_count("word") < min_word_count:
+		var bottom_categories := _bottom_visible_locations("category")
+		var hidden_words := _hidden_card_locations("word")
+		if bottom_categories.is_empty() or hidden_words.is_empty():
 			return
+		var target: Dictionary = bottom_categories[randi_range(0, bottom_categories.size() - 1)]
+		var source: Dictionary = hidden_words[randi_range(0, hidden_words.size() - 1)]
+		_swap_location_cards(target, source)
+
+
+func _bottom_visible_has_category() -> bool:
+	return _bottom_visible_count("category") > 0
+
+
+func _bottom_visible_count(card_type: String) -> int:
+	var count := 0
+	for column in columns:
+		if not column.is_empty():
+			var bottom: Dictionary = column[column.size() - 1]
+			if bottom["type"] == card_type:
+				count += 1
+	return count
+
+
+func _bottom_visible_locations(card_type: String) -> Array[Dictionary]:
+	var locations: Array[Dictionary] = []
+	for col_idx in range(columns.size()):
+		var column: Array = columns[col_idx]
+		if column.is_empty():
+			continue
+		var card_idx: int = column.size() - 1
+		var card: Dictionary = column[card_idx]
+		if card["type"] == card_type:
+			locations.append({"area": "board", "col": col_idx, "index": card_idx})
+	return locations
+
+
+func _non_empty_column_indices() -> Array[int]:
+	var indices: Array[int] = []
+	for col_idx in range(columns.size()):
+		if not columns[col_idx].is_empty():
+			indices.append(col_idx)
+	return indices
+
+
+func _hidden_category_locations() -> Array[Dictionary]:
+	return _hidden_card_locations("category")
+
+
+func _hidden_card_locations(card_type: String) -> Array[Dictionary]:
+	var locations: Array[Dictionary] = []
+	for col_idx in range(columns.size()):
+		var column: Array = columns[col_idx]
+		for card_idx in range(max(0, column.size() - 1)):
+			var card: Dictionary = column[card_idx]
+			if card["type"] == card_type:
+				locations.append({"area": "board", "col": col_idx, "index": card_idx})
+	for deck_idx in range(deck.size()):
+		var card: Dictionary = deck[deck_idx]
+		if card["type"] == card_type:
+			locations.append({"area": "deck", "index": deck_idx})
+	return locations
+
+
+func _swap_location_cards(first: Dictionary, second: Dictionary) -> void:
+	var first_card: Dictionary = _card_at_location(first)
+	var second_card: Dictionary = _card_at_location(second)
+	_set_card_at_location(first, second_card)
+	_set_card_at_location(second, first_card)
+
+
+func _card_at_location(location: Dictionary) -> Dictionary:
+	if location["area"] == "deck":
+		return deck[int(location["index"])]
+	return columns[int(location["col"])][int(location["index"])]
+
+
+func _set_card_at_location(location: Dictionary, card: Dictionary) -> void:
+	if location["area"] == "deck":
+		deck[int(location["index"])] = card
+	else:
+		columns[int(location["col"])][int(location["index"])] = card
 
 
 func _word(card_name: String, face_up := true) -> Dictionary:
@@ -279,6 +507,8 @@ func _render() -> void:
 	if not is_inside_tree():
 		return
 	for child in get_children():
+		if _should_preserve_render_child(child):
+			continue
 		child.queue_free()
 	drag_preview = null
 
@@ -290,8 +520,12 @@ func _render() -> void:
 	bg.size = get_viewport_rect().size
 	add_child(bg)
 
-	_add_label("第1关", Vector2(12, 10), Vector2(72, 22), 17, Color(1, 1, 1, 0.86), false)
-	_add_label("剩余步数：" + str(steps_left), Vector2(12, 31), Vector2(116, 20), 13, Color(1, 1, 1, 0.82), false)
+	if menu_active:
+		_render_start_menu()
+		previous_card_positions = next_card_positions
+		return
+
+	_render_top_controls()
 	_render_draw_area(next_card_positions)
 	_render_deck_area()
 	_render_category_area()
@@ -301,6 +535,20 @@ func _render() -> void:
 		_render_overlay()
 
 	previous_card_positions = next_card_positions
+
+
+func _should_preserve_render_child(child: Node) -> bool:
+	if child.has_meta("audio_player"):
+		return true
+	if child.has_meta("round_transition_overlay"):
+		return not child.is_queued_for_deletion()
+	for node in draw_animation_nodes.values():
+		if child == node:
+			return true
+	for node in wash_animation_nodes:
+		if child == node:
+			return true
+	return false
 
 
 func _render_draw_area(next_card_positions: Dictionary) -> void:
@@ -314,6 +562,7 @@ func _render_draw_area(next_card_positions: Dictionary) -> void:
 		var pos := _draw_card_position(card_index)
 		var is_selected: bool = _selected_has_card(card["id"])
 		var btn := _make_card_button(card, is_selected, is_top)
+		btn.set_meta("draw_card_button", true)
 		btn.position = pos
 		btn.size = Vector2(CARD_W, CARD_H)
 		btn.gui_input.connect(_on_draw_card_gui_input.bind(card_index))
@@ -323,29 +572,56 @@ func _render_draw_area(next_card_positions: Dictionary) -> void:
 
 
 func _render_deck_area() -> void:
-	var btn := Button.new()
+	var btn := Control.new()
+	btn.set_meta("deck_button", true)
 	btn.position = Vector2(_column_x(3), DRAW_Y)
 	btn.size = Vector2(78, 104)
-	btn.text = _deck_button_text()
-	btn.add_theme_font_size_override("font_size", 17)
-	btn.add_theme_color_override("font_color", Color.WHITE)
-	btn.add_theme_color_override("font_hover_color", Color.WHITE)
-	btn.add_theme_color_override("font_pressed_color", Color.WHITE)
-	btn.add_theme_color_override("font_focus_color", Color.WHITE)
-	var deck_style := _style(back_color, Color.WHITE, 4, 14)
-	btn.add_theme_stylebox_override("normal", deck_style)
-	btn.add_theme_stylebox_override("hover", deck_style)
-	btn.add_theme_stylebox_override("pressed", deck_style)
-	btn.pressed.connect(_on_deck_pressed)
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	var has_deck_cards := deck.size() > 0
+	var deck_style := _style(back_color, Color.WHITE, 4, 14) if has_deck_cards else _style(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 14)
+	btn.gui_input.connect(_on_deck_gui_input)
+	var surface := Panel.new()
+	surface.set_meta("deck_surface", true)
+	surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	surface.position = Vector2.ZERO
+	surface.size = btn.size
+	surface.add_theme_stylebox_override("panel", deck_style)
+	btn.add_child(surface)
+	if not has_deck_cards:
+		_add_dashed_outline(btn, btn.size, Color(1, 1, 1, 0.62), 3.0, 10.0, 7.0)
+		_add_generated_label(btn, _deck_button_text(), Vector2(4, 40), Vector2(70, 24), 16, Color(1, 1, 1, 0.72))
+	else:
+		_add_deck_count_labels(btn)
 	add_child(btn)
-	if deck_click_bump:
-		deck_click_bump = false
-		btn.pivot_offset = btn.size * 0.5
-		btn.scale = Vector2(0.92, 0.92)
-		var tween := create_tween()
-		tween.set_trans(Tween.TRANS_BACK)
-		tween.set_ease(Tween.EASE_OUT)
-		tween.tween_property(btn, "scale", Vector2.ONE, 0.20)
+
+
+func _render_top_controls() -> void:
+	var restart := _make_top_button("重开", Vector2(12, 8), "restart_button")
+	restart.pressed.connect(_on_restart_pressed)
+	add_child(restart)
+
+	var home := _make_top_button("首页", Vector2(70, 8), "home_button")
+	home.pressed.connect(_on_home_pressed)
+	add_child(home)
+
+	_add_label("剩余步数：" + str(steps_left), Vector2(12, 42), Vector2(116, 20), 13, Color(1, 1, 1, 0.82), false)
+
+
+func _make_top_button(text: String, pos: Vector2, meta_name: String) -> Button:
+	var btn := Button.new()
+	btn.set_meta(meta_name, true)
+	btn.position = pos
+	btn.size = Vector2(50, 28)
+	btn.text = text
+	btn.add_theme_font_size_override("font_size", 14)
+	btn.add_theme_color_override("font_color", Color("#443b32"))
+	btn.add_theme_color_override("font_hover_color", Color("#443b32"))
+	btn.add_theme_color_override("font_pressed_color", Color("#443b32"))
+	btn.add_theme_color_override("font_focus_color", Color("#443b32"))
+	var style := _style(Color("#ffe08a"), card_border, 3, 8)
+	_apply_button_style_states(btn, style)
+	_attach_button_press_feedback(btn)
+	return btn
 
 
 func _render_category_area() -> void:
@@ -356,34 +632,31 @@ func _render_category_area() -> void:
 			var state: Dictionary = active_categories[category]
 			var total: int = categories[category].size()
 			var count: int = state["collected"].size()
-			var text = category + "\n" + str(count) + "/" + str(total)
 			var btn := Button.new()
 			btn.set_meta("category_slot", i)
 			btn.position = pos
 			btn.size = Vector2(CARD_W, CARD_H)
-			btn.text = text
+			btn.text = ""
 			btn.disabled = false
-			btn.add_theme_font_size_override("font_size", _font_size_for_card_text(text, "category"))
+			btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			btn.add_theme_color_override("font_color", Color("#443b32"))
 			btn.add_theme_color_override("font_hover_color", Color("#443b32"))
 			btn.add_theme_color_override("font_pressed_color", Color("#443b32"))
 			btn.add_theme_color_override("font_focus_color", Color("#443b32"))
 			var category_style := _style(category_color, card_border, 4, 10)
-			btn.add_theme_stylebox_override("normal", category_style)
-			btn.add_theme_stylebox_override("hover", category_style)
-			btn.add_theme_stylebox_override("pressed", category_style)
+			_apply_button_style_states(btn, category_style)
+			_add_category_card_labels(btn, category, str(count) + "/" + str(total), Color("#443b32"))
 			add_child(btn)
 		else:
 			var slot := Button.new()
+			slot.set_meta("category_empty_slot", i)
 			slot.position = pos
 			slot.size = Vector2(CARD_W, CARD_H)
-			slot.text = "+"
-			slot.add_theme_font_size_override("font_size", 30)
-			slot.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
-			var slot_style := _style(slot_color, Color(1, 1, 1, 0.35), 2, 10)
-			slot.add_theme_stylebox_override("normal", slot_style)
-			slot.add_theme_stylebox_override("hover", slot_style)
-			slot.add_theme_stylebox_override("pressed", slot_style)
+			slot.text = ""
+			slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var slot_style := _style(category_empty_slot_color, Color(0, 0, 0, 0), 0, 10)
+			_apply_button_style_states(slot, slot_style)
+			_add_dashed_outline(slot, slot.size, Color("#ffe070", 0.86), 2.0, 8.0, 6.0, "category_slot_dash")
 			add_child(slot)
 
 
@@ -396,12 +669,14 @@ func _render_board_area(next_card_positions: Dictionary) -> void:
 			empty.position = Vector2(x, BOARD_Y)
 			empty.size = Vector2(CARD_W, CARD_H)
 			empty.text = "+"
+			empty.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			empty.add_theme_font_size_override("font_size", 30)
 			empty.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+			empty.add_theme_color_override("font_hover_color", Color(1, 1, 1, 0.45))
+			empty.add_theme_color_override("font_pressed_color", Color(1, 1, 1, 0.45))
+			empty.add_theme_color_override("font_focus_color", Color(1, 1, 1, 0.45))
 			var empty_style := _style(slot_color, Color(1, 1, 1, 0.35), 2, 10)
-			empty.add_theme_stylebox_override("normal", empty_style)
-			empty.add_theme_stylebox_override("hover", empty_style)
-			empty.add_theme_stylebox_override("pressed", empty_style)
+			_apply_button_style_states(empty, empty_style)
 			add_child(empty)
 			continue
 
@@ -410,17 +685,39 @@ func _render_board_area(next_card_positions: Dictionary) -> void:
 			var pos := Vector2(x, BOARD_Y + card_idx * STACK_STEP)
 			var is_selected: bool = _selected_has_card(card["id"])
 			var selectable: bool = bool(card["face_up"]) and card_idx >= _group_start_index(column)
+			var is_revealing: bool = revealing_board_cards.has(card["id"])
 			var covered_by_next := card_idx < column.size() - 1
 			var board_text := "" if covered_by_next and card["face_up"] else _card_text_for_board(column, card_idx)
-			var btn := _make_card_button(card, is_selected, selectable, board_text)
+			var visual_card := card
+			var visual_text := board_text
+			if is_revealing:
+				visual_card = card.duplicate()
+				visual_card["face_up"] = false
+				visual_text = ""
+			var btn := _make_card_button(visual_card, is_selected, selectable and not is_revealing, visual_text)
 			btn.position = pos
 			btn.size = Vector2(CARD_W, CARD_H)
 			btn.gui_input.connect(_on_board_card_gui_input.bind(col_idx, card_idx))
 			add_child(btn)
-			_animate_card_node(btn, card, pos)
+			if is_revealing:
+				_start_board_reveal_animation(btn, card, selectable, board_text)
+			else:
+				_animate_card_node(btn, card, pos)
 			next_card_positions[card["id"]] = pos
-			if covered_by_next and card["face_up"]:
+			if covered_by_next and card["face_up"] and not is_revealing:
 				_add_card_strip_label(btn, _card_text_for_board(column, card_idx))
+
+
+func _refresh_draw_area_only() -> void:
+	if not is_inside_tree():
+		return
+	for child in get_children():
+		if child is Control and child.has_meta("draw_card_button"):
+			child.free()
+	var next_card_positions := {}
+	_render_draw_area(next_card_positions)
+	for card_id in next_card_positions.keys():
+		previous_card_positions[card_id] = next_card_positions[card_id]
 
 
 func _render_overlay() -> void:
@@ -439,26 +736,51 @@ func _render_overlay() -> void:
 	var restart := Button.new()
 	restart.position = Vector2(118, 326)
 	restart.size = Vector2(140, 40)
-	restart.text = "重新开始"
+	restart.text = "再来一局"
 	restart.add_theme_font_size_override("font_size", 20)
 	restart.add_theme_color_override("font_color", Color("#544b4b"))
 	restart.add_theme_color_override("font_hover_color", Color("#544b4b"))
 	restart.add_theme_color_override("font_pressed_color", Color("#544b4b"))
 	restart.add_theme_color_override("font_focus_color", Color("#544b4b"))
 	var restart_style := _style(Color("#ffe08a"), card_border, 3, 10)
-	restart.add_theme_stylebox_override("normal", restart_style)
-	restart.add_theme_stylebox_override("hover", restart_style)
-	restart.add_theme_stylebox_override("pressed", restart_style)
+	_apply_button_style_states(restart, restart_style)
 	restart.pressed.connect(_on_restart_pressed)
+	_attach_button_press_feedback(restart)
 	add_child(restart)
+
+
+func _render_start_menu() -> void:
+	var start := Button.new()
+	start.set_meta("start_button", true)
+	start.position = Vector2((get_viewport_rect().size.x - 180.0) * 0.5, 332)
+	start.size = Vector2(180, 48)
+	start.text = "开始游戏"
+	start.add_theme_font_size_override("font_size", 22)
+	start.add_theme_color_override("font_color", Color("#443b32"))
+	start.add_theme_color_override("font_hover_color", Color("#443b32"))
+	start.add_theme_color_override("font_pressed_color", Color("#443b32"))
+	start.add_theme_color_override("font_focus_color", Color("#443b32"))
+	var start_style := _style(Color("#ffe08a"), card_border, 4, 12)
+	_apply_button_style_states(start, start_style)
+	start.z_index = 202
+	start.pressed.connect(_on_start_pressed)
+	_attach_button_press_feedback(start)
+	add_child(start)
 
 
 func _make_card_button(card: Dictionary, is_selected: bool, is_clickable: bool, override_text := "") -> Button:
 	var btn := Button.new()
 	btn.set_meta("card_id", card["id"])
 	btn.disabled = game_over or not is_clickable
-	btn.text = override_text if override_text != "" else _card_text(card)
-	btn.add_theme_font_size_override("font_size", _font_size_for_card_text(btn.text, card["type"]))
+	_configure_card_button_visual(btn, card, is_selected, override_text)
+	return btn
+
+
+func _configure_card_button_visual(btn: Button, card: Dictionary, is_selected: bool, override_text := "") -> void:
+	_clear_generated_button_labels(btn)
+	var display_text := override_text if override_text != "" else _card_text(card)
+	btn.text = display_text
+	btn.add_theme_font_size_override("font_size", _font_size_for_card_text(display_text, card["type"]))
 	btn.add_theme_color_override("font_color", Color("#544b4b"))
 	btn.add_theme_color_override("font_hover_color", Color("#544b4b"))
 	btn.add_theme_color_override("font_pressed_color", Color("#544b4b"))
@@ -470,11 +792,143 @@ func _make_card_button(card: Dictionary, is_selected: bool, is_clickable: bool, 
 	if not card["face_up"]:
 		fill = back_color
 		border = Color.WHITE
-	btn.add_theme_stylebox_override("normal", _style(fill, border, 4, 10))
-	btn.add_theme_stylebox_override("disabled", _style(fill, border, 4, 10))
-	btn.add_theme_stylebox_override("hover", _style(fill, border, 4, 10))
-	btn.add_theme_stylebox_override("pressed", _style(fill, border, 4, 10))
-	return btn
+	_apply_button_style_states(btn, _style(fill, border, 4, 10))
+	if card["type"] == "category" and card["face_up"] and display_text != "":
+		var lines := display_text.split("\n")
+		var progress := "0/" + str(categories.get(card["category"], []).size())
+		if lines.size() > 1:
+			progress = String(lines[1])
+		btn.text = ""
+		_add_category_card_labels(btn, String(lines[0]), progress, Color("#544b4b"))
+
+
+func _apply_button_style_states(btn: Button, style: StyleBoxFlat) -> void:
+	btn.add_theme_stylebox_override("normal", style)
+	btn.add_theme_stylebox_override("hover", style)
+	btn.add_theme_stylebox_override("pressed", style)
+	btn.add_theme_stylebox_override("disabled", style)
+	btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+
+
+func _add_dashed_outline(parent: Control, outline_size: Vector2, color: Color, thickness: float, dash: float, gap: float, meta_name := "deck_dash") -> void:
+	var right := outline_size.x - thickness
+	var bottom := outline_size.y - thickness
+	var x := 8.0
+	while x < outline_size.x - 8.0:
+		var dash_width: float = min(dash, outline_size.x - 8.0 - x)
+		_add_dash(parent, Vector2(x, 0), Vector2(dash_width, thickness), color, meta_name)
+		_add_dash(parent, Vector2(x, bottom), Vector2(dash_width, thickness), color, meta_name)
+		x += dash + gap
+	var y := 8.0
+	while y < outline_size.y - 8.0:
+		var dash_height: float = min(dash, outline_size.y - 8.0 - y)
+		_add_dash(parent, Vector2(0, y), Vector2(thickness, dash_height), color, meta_name)
+		_add_dash(parent, Vector2(right, y), Vector2(thickness, dash_height), color, meta_name)
+		y += dash + gap
+
+
+func _add_dash(parent: Control, pos: Vector2, dash_size: Vector2, color: Color, meta_name := "deck_dash") -> void:
+	var line := ColorRect.new()
+	line.set_meta(meta_name, true)
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.color = color
+	line.position = pos
+	line.size = dash_size
+	parent.add_child(line)
+
+
+func _add_deck_count_labels(parent: Control) -> void:
+	_add_generated_label(parent, "牌堆", Vector2(5, 26), Vector2(68, 24), 17, Color.WHITE)
+	_add_generated_label(parent, "剩余" + str(deck.size()) + "张", Vector2(4, 52), Vector2(70, 22), 13, Color.WHITE)
+
+
+func _add_category_card_labels(parent: Control, category_name: String, progress: String, color: Color) -> void:
+	_add_generated_label(parent, category_name, Vector2(6, 20), Vector2(CARD_W - 12, 34), _font_size_for_card_text(category_name, "category"), color)
+	_add_generated_label(parent, progress, Vector2(6, 57), Vector2(CARD_W - 12, 24), 16, color)
+
+
+func _add_generated_label(parent: Control, text: String, pos: Vector2, label_size: Vector2, font_size: int, color: Color) -> Label:
+	var label := Label.new()
+	label.set_meta("generated_label", true)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.position = pos
+	label.size = label_size
+	label.text = text
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", color)
+	parent.add_child(label)
+	return label
+
+
+func _clear_generated_button_labels(parent: Control) -> void:
+	for child in parent.get_children():
+		if child.has_meta("generated_label"):
+			child.free()
+
+
+func _attach_button_press_feedback(btn: Button) -> void:
+	btn.pivot_offset = btn.size * 0.5
+	btn.button_down.connect(_on_button_feedback_down.bind(btn))
+	btn.button_up.connect(_on_button_feedback_up.bind(btn))
+
+
+func _on_button_feedback_down(btn: Button) -> void:
+	if not is_instance_valid(btn) or btn.disabled:
+		return
+	_play_button_click_sfx()
+	btn.pivot_offset = btn.size * 0.5
+	var tween := create_tween()
+	tween.set_trans(Tween.TRANS_CUBIC)
+	tween.set_ease(Tween.EASE_OUT)
+	tween.tween_property(btn, "scale", Vector2(0.94, 0.94), 0.06)
+
+
+func _on_button_feedback_up(btn: Button) -> void:
+	if not is_instance_valid(btn):
+		return
+	btn.pivot_offset = btn.size * 0.5
+	var tween := create_tween()
+	tween.set_trans(Tween.TRANS_BACK)
+	tween.set_ease(Tween.EASE_OUT)
+	tween.tween_property(btn, "scale", Vector2.ONE, 0.12)
+
+
+func _start_board_reveal_animation(btn: Button, card: Dictionary, selectable: bool, board_text: String) -> void:
+	_play_card_flip_sfx()
+	btn.disabled = true
+	btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn.pivot_offset = btn.size * 0.5
+	btn.scale = Vector2.ONE
+	var face_btn := _make_card_button(card, false, false, board_text)
+	face_btn.disabled = true
+	face_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face_btn.position = btn.position
+	face_btn.size = btn.size
+	face_btn.pivot_offset = face_btn.size * 0.5
+	face_btn.scale = Vector2(0.08, 1.0)
+	face_btn.z_index = btn.z_index + 1
+	add_child(face_btn)
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.set_trans(Tween.TRANS_CUBIC)
+	tween.set_ease(Tween.EASE_OUT)
+	tween.tween_property(btn, "scale:x", 0.08, 0.16)
+	tween.tween_property(face_btn, "scale:x", 1.0, 0.16)
+	tween.chain().tween_callback(_finish_board_reveal_animation.bind(int(card["id"]), btn, face_btn, card, board_text, selectable))
+
+
+func _finish_board_reveal_animation(card_id: int, btn: Button, face_btn: Button, card: Dictionary, board_text: String, selectable: bool) -> void:
+	revealing_board_cards.erase(card_id)
+	if is_instance_valid(face_btn):
+		face_btn.queue_free()
+	if not is_instance_valid(btn):
+		return
+	_configure_card_button_visual(btn, card, false, board_text)
+	btn.disabled = game_over or not selectable
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	btn.scale = Vector2.ONE
 
 
 func _animate_card_node(node: Control, card: Dictionary, target_pos: Vector2) -> void:
@@ -508,27 +962,80 @@ func _animate_card_node(node: Control, card: Dictionary, target_pos: Vector2) ->
 
 func _spawn_draw_card_animation(card: Dictionary) -> void:
 	if not is_inside_tree():
-		draw_stack.append(card)
-		deck_animation_busy = false
+		if not _draw_stack_has_card_id(card["id"]):
+			draw_stack.append(card)
 		return
-	var target_pos := _draw_card_position_for_size(draw_stack.size(), draw_stack.size() + 1)
-	var fly_card := _make_card_button(card, false, false)
+	var target_pos := _draw_card_position(draw_stack.size() - 1)
+	var back_card := card.duplicate()
+	back_card["face_up"] = false
+	var fly_card := _make_card_button(back_card, false, false)
 	fly_card.disabled = true
+	fly_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fly_card.position = Vector2(_column_x(3), DRAW_Y)
 	fly_card.size = Vector2(CARD_W, CARD_H)
 	fly_card.pivot_offset = fly_card.size * 0.5
-	fly_card.scale = Vector2(0.62, 0.62)
-	fly_card.rotation_degrees = -10.0
-	fly_card.modulate.a = 0.94
+	fly_card.scale = Vector2(0.98, 0.98)
+	fly_card.rotation_degrees = 0.0
 	fly_card.z_index = 120
 	add_child(fly_card)
 	draw_animation_nodes[card["id"]] = fly_card
 	draw_animation_cards[card["id"]] = card
 	draw_flights[card["id"]] = {
 		"elapsed": 0.0,
+		"move_elapsed": 0.0,
+		"move_time": DRAW_ANIM_TIME,
 		"start": fly_card.position,
 		"target": target_pos,
+		"flipped": false,
 	}
+	_retarget_draw_flights()
+
+
+func _retarget_draw_flights() -> void:
+	var hidden_card_ids: Array[int] = []
+	var retarget_card_ids: Array[int] = []
+	var retarget_targets := {}
+	var retarget_starts := {}
+	var common_move_time := 0.0
+	for raw_card_id in draw_flights.keys():
+		var card_id := int(raw_card_id)
+		var stack_index := _draw_stack_index_for_card_id(card_id)
+		if stack_index < 0 or not _draw_stack_index_is_visible(stack_index):
+			hidden_card_ids.append(card_id)
+			continue
+		var next_target := _draw_card_position(stack_index)
+		var flight: Dictionary = draw_flights[raw_card_id]
+		var current_target: Vector2 = flight["target"]
+		if current_target.distance_to(next_target) <= 0.1:
+			continue
+		var fly_card = draw_animation_nodes.get(card_id)
+		if is_instance_valid(fly_card):
+			var elapsed: float = float(flight.get("elapsed", 0.0))
+			retarget_card_ids.append(card_id)
+			retarget_targets[card_id] = next_target
+			retarget_starts[card_id] = fly_card.position
+			common_move_time = max(common_move_time, max(DRAW_RETARGET_TIME, DRAW_ANIM_TIME - elapsed))
+		else:
+			flight["target"] = next_target
+	for card_id in retarget_card_ids:
+		var flight: Dictionary = draw_flights[card_id]
+		flight["start"] = retarget_starts[card_id]
+		flight["move_elapsed"] = 0.0
+		flight["move_time"] = common_move_time
+		flight["target"] = retarget_targets[card_id]
+	for card_id in hidden_card_ids:
+		_discard_draw_animation(card_id)
+
+
+func _draw_stack_index_is_visible(card_index: int) -> bool:
+	return card_index >= max(0, draw_stack.size() - 3)
+
+
+func _draw_stack_index_for_card_id(card_id: int) -> int:
+	for i in range(draw_stack.size()):
+		if int(draw_stack[i]["id"]) == card_id:
+			return i
+	return -1
 
 
 func _update_draw_flights(delta: float) -> void:
@@ -542,16 +1049,26 @@ func _update_draw_flights(delta: float) -> void:
 			finished.append(card_id)
 			continue
 		flight["elapsed"] = float(flight["elapsed"]) + delta
+		var move_time: float = max(0.001, float(flight.get("move_time", DRAW_ANIM_TIME)))
+		flight["move_elapsed"] = min(move_time, float(flight.get("move_elapsed", 0.0)) + delta)
 		var t: float = clamp(float(flight["elapsed"]) / DRAW_ANIM_TIME, 0.0, 1.0)
+		var move_t: float = clamp(float(flight["move_elapsed"]) / move_time, 0.0, 1.0)
 		var eased: float = 1.0 - pow(1.0 - t, 3.0)
+		var move_eased: float = 1.0 - pow(1.0 - move_t, 3.0)
 		var start: Vector2 = flight["start"]
 		var target: Vector2 = flight["target"]
-		var arc := Vector2(0, -22.0 * sin(t * PI))
-		fly_card.position = start.lerp(target, eased) + arc
-		var scale_value: float = lerp(0.62, 1.0, eased)
-		fly_card.scale = Vector2(scale_value, scale_value)
-		fly_card.rotation_degrees = lerp(-10.0, 0.0, eased)
-		if t >= 1.0:
+		fly_card.position = start.lerp(target, move_eased)
+		if t >= CARD_FLIP_FACE_TIME and not bool(flight.get("flipped", false)):
+			if draw_animation_cards.has(card_id):
+				_configure_card_button_visual(fly_card, draw_animation_cards[card_id], false)
+				fly_card.disabled = true
+			flight["flipped"] = true
+		var base_scale: float = lerp(0.98, 1.0, eased)
+		var depth_scale: float = 1.0 + 0.08 * sin(t * PI)
+		var flip_scale: float = _flip_scale_for_progress(t, CARD_FLIP_FACE_TIME)
+		fly_card.scale = Vector2(base_scale * flip_scale * depth_scale, base_scale * depth_scale)
+		fly_card.rotation_degrees = 0.0
+		if t >= 1.0 and move_t >= 1.0:
 			finished.append(card_id)
 	for card_id in finished:
 		draw_flights.erase(card_id)
@@ -560,14 +1077,167 @@ func _update_draw_flights(delta: float) -> void:
 
 func _finish_draw_card_animation(card_id: int) -> void:
 	if draw_animation_cards.has(card_id):
-		draw_stack.append(draw_animation_cards[card_id])
+		if not _draw_stack_has_card_id(card_id):
+			draw_stack.append(draw_animation_cards[card_id])
+	_discard_draw_animation(card_id)
+	_render()
+
+
+func _discard_draw_animation(card_id: int) -> void:
 	draw_animation_cards.erase(card_id)
+	animating_draw_cards.erase(card_id)
+	draw_flights.erase(card_id)
 	var fly_card = draw_animation_nodes.get(card_id)
 	draw_animation_nodes.erase(card_id)
 	if is_instance_valid(fly_card):
 		fly_card.queue_free()
+
+
+func _draw_stack_has_card_id(card_id: int) -> bool:
+	for card in draw_stack:
+		if int(card["id"]) == card_id:
+			return true
+	return false
+
+
+func _spawn_wash_animation() -> void:
+	var visible_count: int = min(3, draw_stack.size())
+	if visible_count <= 0:
+		_finish_wash_animation()
+		return
+	_clear_draw_animations_for_wash()
+	wash_animation_nodes.clear()
+	wash_animation_starts.clear()
+	wash_flight.clear()
+	var deck_button := _find_deck_button_control()
+	if deck_button != null:
+		deck_button.visible = false
+		deck_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var visible_cards: Array = []
+	for i in range(visible_count):
+		var card_index: int = draw_stack.size() - visible_count + i
+		visible_cards.append(draw_stack[card_index])
+	_hide_drag_source_cards(visible_cards)
+
+	for i in range(visible_count):
+		var card_index: int = draw_stack.size() - visible_count + i
+		var card: Dictionary = draw_stack[card_index]
+		var node := _make_card_button(card, false, false)
+		node.disabled = true
+		node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		node.position = _draw_card_position(card_index)
+		node.size = Vector2(CARD_W, CARD_H)
+		node.pivot_offset = node.size * 0.5
+		node.z_index = 125 + i
+		add_child(node)
+		wash_animation_nodes.append(node)
+		wash_animation_starts.append(node.position)
+	wash_animation_nodes[wash_animation_nodes.size() - 1].z_index = 135
+	wash_flight = {
+		"elapsed": 0.0,
+		"target": Vector2(_column_x(3), DRAW_Y),
+		"flipped": false,
+	}
+
+
+func _clear_draw_animations_for_wash() -> void:
+	for raw_card_id in draw_animation_nodes.keys():
+		_discard_draw_animation(int(raw_card_id))
+	draw_flights.clear()
+	draw_animation_cards.clear()
+	animating_draw_cards.clear()
+
+
+func _update_wash_flight(delta: float) -> void:
+	if wash_flight.is_empty():
+		return
+	if wash_animation_nodes.is_empty():
+		wash_flight.clear()
+		_finish_wash_animation()
+		return
+	wash_flight["elapsed"] = float(wash_flight["elapsed"]) + delta
+	var t: float = clamp(float(wash_flight["elapsed"]) / DRAW_ANIM_TIME, 0.0, 1.0)
+	var eased: float = 1.0 - pow(1.0 - t, 3.0)
+	var target: Vector2 = wash_flight["target"]
+	for i in range(wash_animation_nodes.size()):
+		var node := wash_animation_nodes[i]
+		if not is_instance_valid(node):
+			continue
+		var start := wash_animation_starts[i]
+		node.position = start.lerp(target, eased)
+		node.rotation_degrees = 0.0
+		if i < wash_animation_nodes.size() - 1:
+			_update_wash_under_card_visual(node, t, eased)
+		else:
+			_update_wash_keeper_visual(node, t, eased)
+	if t >= WASH_FLIP_FACE_TIME and not bool(wash_flight.get("flipped", false)):
+		for node in wash_animation_nodes:
+			_set_wash_card_back(node)
+		wash_flight["flipped"] = true
+	if t >= 1.0:
+		wash_flight.clear()
+		_finish_wash_animation()
+
+
+func _update_wash_keeper_visual(node: Control, t: float, eased: float) -> void:
+	var base_scale: float = lerp(0.98, 1.0, eased)
+	var depth_scale: float = 1.0 + 0.08 * sin(t * PI)
+	var flip_scale: float = _flip_scale_for_progress(t, WASH_FLIP_FACE_TIME)
+	node.scale = Vector2(base_scale * flip_scale * depth_scale, base_scale * depth_scale)
+	node.rotation_degrees = 0.0
+
+
+func _update_wash_under_card_visual(node: Control, t: float, eased: float) -> void:
+	var under_scale: float = lerp(1.0, 0.96, eased)
+	var flip_scale: float = _flip_scale_for_progress(t, WASH_FLIP_FACE_TIME)
+	node.scale = Vector2(under_scale * flip_scale, under_scale)
+	node.rotation_degrees = 0.0
+
+
+func _flip_scale_for_progress(t: float, flip_face_time: float) -> float:
+	if t < flip_face_time:
+		return max(0.08, cos((t / flip_face_time) * PI * 0.5))
+	var open_t: float = (t - flip_face_time) / (1.0 - flip_face_time)
+	return max(0.08, sin(open_t * PI * 0.5))
+
+
+func _set_wash_card_back(node: Control) -> void:
+	if not is_instance_valid(node) or draw_stack.is_empty():
+		return
+	var back_card: Dictionary = draw_stack[draw_stack.size() - 1].duplicate()
+	back_card["face_up"] = false
+	_configure_card_button_visual(node as Button, back_card, false)
+	(node as Button).disabled = true
+
+
+func _finish_wash_animation() -> void:
+	for node in wash_animation_nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+	wash_animation_nodes.clear()
+	wash_animation_starts.clear()
+	wash_flight.clear()
+	for card in draw_stack:
+		card["face_up"] = false
+	deck = draw_stack.duplicate()
+	deck.shuffle()
+	draw_stack.clear()
 	deck_animation_busy = false
-	_render()
+	_consume_step("洗牌完成")
+
+
+func _find_deck_button_control() -> Control:
+	return _find_deck_button_control_in_node(self)
+
+
+func _find_deck_button_control_in_node(node: Node) -> Control:
+	if node is Control and node.has_meta("deck_button"):
+		return node
+	for child in node.get_children():
+		var found := _find_deck_button_control_in_node(child)
+		if found != null:
+			return found
+	return null
 
 
 func _card_text(card: Dictionary) -> String:
@@ -675,9 +1345,9 @@ func _board_group_word_count(column: Array, card_idx: int) -> int:
 
 func _deck_button_text() -> String:
 	if deck.size() > 0:
-		return "牌堆\n剩余" + str(deck.size())
+		return "牌堆\n剩余" + str(deck.size()) + "张"
 	if draw_stack.size() > 0:
-		return "洗牌\n" + str(draw_stack.size()) + "张"
+		return "点击洗牌"
 	return "空"
 
 
@@ -744,36 +1414,65 @@ func _board_column_rect(col_idx: int) -> Rect2:
 	return Rect2(Vector2(_column_x(col_idx), BOARD_Y), Vector2(CARD_W, column_height))
 
 
+func _deck_rect() -> Rect2:
+	return Rect2(Vector2(_column_x(3), DRAW_Y), Vector2(78, 104))
+
+
+func _is_deck_press_event(event: InputEvent) -> bool:
+	if menu_active or game_over or round_transition_active:
+		return false
+	var press_position := Vector2.INF
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		press_position = event.position
+	elif event is InputEventScreenTouch and event.pressed:
+		press_position = event.position
+	else:
+		return false
+	return _deck_rect().has_point(press_position)
+
+
 func _on_deck_pressed() -> void:
-	if not is_inside_tree():
+	if menu_active:
+		return
+	_handle_deck_pressed()
+
+
+func _on_deck_gui_input(event: InputEvent) -> void:
+	if menu_active or game_over:
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		_handle_deck_pressed()
-		return
-	if deck_press_queued:
-		return
-	deck_press_queued = true
-	call_deferred("_handle_deck_pressed")
+		accept_event()
+	elif event is InputEventScreenTouch and event.pressed:
+		_handle_deck_pressed()
+		accept_event()
 
 
 func _handle_deck_pressed() -> void:
-	deck_press_queued = false
 	if game_over or deck_animation_busy:
 		return
-	deck_click_bump = true
 	selected.clear()
 	if deck.size() > 0:
+		_play_card_flip_sfx()
 		var card: Dictionary = deck.pop_back()
 		card["face_up"] = true
 		steps_left -= 1
 		status_text = "翻出：" + card["name"]
 		_check_end_state()
 		if is_inside_tree():
-			deck_animation_busy = true
+			animating_draw_cards[card["id"]] = true
+			draw_stack.append(card)
 			_render()
 			_spawn_draw_card_animation(card)
 		else:
 			draw_stack.append(card)
 		return
 	elif draw_stack.size() > 0:
+		_play_card_flip_sfx()
+		if is_inside_tree():
+			deck_animation_busy = true
+			_spawn_wash_animation()
+			return
 		for card in draw_stack:
 			card["face_up"] = false
 		deck = draw_stack.duplicate()
@@ -788,7 +1487,7 @@ func _handle_deck_pressed() -> void:
 
 
 func _on_draw_card_gui_input(event: InputEvent, card_index: int) -> void:
-	if game_over:
+	if menu_active or game_over:
 		return
 	if card_index != draw_stack.size() - 1:
 		return
@@ -802,7 +1501,7 @@ func _on_draw_card_gui_input(event: InputEvent, card_index: int) -> void:
 
 
 func _on_board_card_gui_input(event: InputEvent, col_idx: int, card_idx: int) -> void:
-	if game_over:
+	if menu_active or game_over:
 		return
 	var selection := _selection_for_board(col_idx, card_idx)
 	if selection.is_empty():
@@ -980,19 +1679,221 @@ func _pulse_drag_preview() -> void:
 	tween.tween_property(drag_preview, "scale", Vector2.ONE, 0.12)
 
 
-func _on_restart_pressed() -> void:
+func _start_new_round(message: String) -> void:
+	if round_transition_active:
+		return
+	pending_round_message = message
+	_play_round_close_transition()
+
+
+func _setup_new_round(message: String) -> void:
+	_clear_transient_interaction_state(false)
 	deck.clear()
 	draw_stack.clear()
 	columns.clear()
 	active_categories.clear()
 	active_order.clear()
 	selected.clear()
-	steps_left = STARTING_STEPS
+	previous_card_positions.clear()
 	next_card_id = 1
+	steps_left = STARTING_STEPS
 	game_over = false
-	status_text = "点击牌堆开始"
+	menu_active = false
+	status_text = message
 	_init_level()
 	_render()
+
+
+func _play_round_close_transition() -> void:
+	if not is_inside_tree():
+		_setup_new_round(pending_round_message)
+		return
+	_clear_round_transition()
+	round_transition_active = true
+	var viewport_size: Vector2 = get_viewport_rect().size
+	var half_height: float = ceil(viewport_size.y * 0.5)
+
+	var overlay := Control.new()
+	overlay.set_meta("round_transition_overlay", true)
+	overlay.position = Vector2.ZERO
+	overlay.size = viewport_size
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.z_index = 260
+	add_child(overlay)
+	round_transition_overlay = overlay
+
+	var top := ColorRect.new()
+	top.set_meta("round_transition_top", true)
+	top.color = curtain_color
+	top.position = Vector2(0.0, -half_height - 2.0)
+	top.size = Vector2(viewport_size.x, half_height + 2.0)
+	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(top)
+	_add_round_transition_seam(top, "round_transition_top_shadow", true, viewport_size.x)
+
+	var bottom := ColorRect.new()
+	bottom.set_meta("round_transition_bottom", true)
+	bottom.color = curtain_color
+	bottom.position = Vector2(0.0, viewport_size.y)
+	bottom.size = Vector2(viewport_size.x, viewport_size.y - half_height + 2.0)
+	bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(bottom)
+	_add_round_transition_seam(bottom, "round_transition_bottom_shadow", false, viewport_size.x)
+
+	_kill_round_transition_tween()
+	var tween := create_tween()
+	round_transition_tween = tween
+	tween.set_parallel(true)
+	tween.set_trans(Tween.TRANS_CUBIC)
+	tween.set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(top, "position:y", 0.0, ROUND_TRANSITION_CLOSE_TIME)
+	tween.tween_property(bottom, "position:y", half_height - 1.0, ROUND_TRANSITION_CLOSE_TIME)
+	tween.chain().tween_callback(_finish_round_close_transition.bind(overlay))
+
+
+func _finish_round_close_transition(overlay: Control) -> void:
+	_kill_round_transition_tween()
+	if not is_instance_valid(overlay):
+		round_transition_active = false
+		return
+	_setup_new_round(pending_round_message)
+	_start_round_transition_hold(overlay)
+
+
+func _start_round_transition_hold(overlay: Control) -> void:
+	if not is_instance_valid(overlay):
+		round_transition_active = false
+		return
+	_kill_round_transition_tween()
+	var tween := create_tween()
+	round_transition_tween = tween
+	tween.tween_interval(ROUND_TRANSITION_HOLD_TIME)
+	tween.tween_callback(_play_round_open_transition.bind(overlay))
+
+
+func _add_round_transition_seam(parent: Control, meta_name: String, at_bottom: bool, width: float) -> void:
+	var seam_y := parent.size.y - ROUND_TRANSITION_SEAM_H if at_bottom else 0.0
+	var shade := ColorRect.new()
+	shade.set_meta(meta_name, true)
+	shade.color = Color(0.16, 0.24, 0.13, 0.16)
+	shade.position = Vector2(0.0, seam_y + (ROUND_TRANSITION_SEAM_H - 2.0 if at_bottom else 0.0))
+	shade.size = Vector2(width, 2.0)
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(shade)
+
+	var highlight := ColorRect.new()
+	highlight.color = Color(1.0, 1.0, 1.0, 0.10)
+	highlight.position = Vector2(0.0, seam_y if at_bottom else seam_y + 3.0)
+	highlight.size = Vector2(width, 1.0)
+	highlight.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(highlight)
+
+
+func _play_round_open_transition(overlay: Control) -> void:
+	if not is_instance_valid(overlay):
+		round_transition_active = false
+		return
+	var viewport_size: Vector2 = get_viewport_rect().size
+	var top := _find_transition_panel(overlay, "round_transition_top")
+	var bottom := _find_transition_panel(overlay, "round_transition_bottom")
+	if top == null or bottom == null:
+		_finish_round_open_transition(overlay)
+		return
+	_kill_round_transition_tween()
+	var tween := create_tween()
+	round_transition_tween = tween
+	tween.set_parallel(true)
+	tween.set_trans(Tween.TRANS_CUBIC)
+	tween.set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(top, "position:y", -top.size.y, ROUND_TRANSITION_OPEN_TIME)
+	tween.tween_property(bottom, "position:y", viewport_size.y, ROUND_TRANSITION_OPEN_TIME)
+	tween.chain().tween_callback(_finish_round_open_transition.bind(overlay))
+
+
+func _finish_round_open_transition(overlay: Control) -> void:
+	_kill_round_transition_tween()
+	if is_instance_valid(overlay):
+		overlay.queue_free()
+	if round_transition_overlay == overlay:
+		round_transition_overlay = null
+	round_transition_active = false
+	pending_round_message = ""
+
+
+func _find_transition_panel(node: Node, meta_name: String) -> ColorRect:
+	for child in node.get_children():
+		if child is ColorRect and child.has_meta(meta_name):
+			return child
+		var nested := _find_transition_panel(child, meta_name)
+		if nested != null:
+			return nested
+	return null
+
+
+func _clear_round_transition() -> void:
+	_kill_round_transition_tween()
+	if is_instance_valid(round_transition_overlay):
+		round_transition_overlay.queue_free()
+	round_transition_overlay = null
+	round_transition_active = false
+	pending_round_message = ""
+
+
+func _kill_round_transition_tween() -> void:
+	if is_instance_valid(round_transition_tween):
+		round_transition_tween.kill()
+	round_transition_tween = null
+
+
+func _on_restart_pressed() -> void:
+	_start_new_round("点击牌堆开始")
+
+
+func _on_home_pressed() -> void:
+	_clear_transient_interaction_state()
+	menu_active = true
+	game_over = false
+	selected.clear()
+	_render()
+
+
+func _on_start_pressed() -> void:
+	_start_new_round("开始游戏")
+
+
+func _clear_transient_interaction_state(clear_transition := true) -> void:
+	if clear_transition:
+		_clear_round_transition()
+	drag_candidate.clear()
+	selected.clear()
+	pending_spawn_positions.clear()
+	pending_draw_animations.clear()
+	animating_draw_cards.clear()
+	revealing_board_cards.clear()
+	suppress_next_move_animations.clear()
+	deck_animation_busy = false
+	draw_flights.clear()
+	draw_animation_cards.clear()
+	wash_flight.clear()
+	wash_animation_starts.clear()
+	for node in draw_animation_nodes.values():
+		if is_instance_valid(node):
+			node.queue_free()
+	draw_animation_nodes.clear()
+	for node in wash_animation_nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+	wash_animation_nodes.clear()
+	if is_instance_valid(drag_preview):
+		drag_preview.queue_free()
+	drag_preview = null
+	if is_instance_valid(returning_drag_preview):
+		returning_drag_preview.queue_free()
+	returning_drag_preview = null
+	if is_instance_valid(absorbing_drag_preview):
+		absorbing_drag_preview.queue_free()
+	absorbing_drag_preview = null
+	pending_absorb_slot = -1
 
 
 func _selection_for_draw(card_index: int) -> Dictionary:
@@ -1094,14 +1995,31 @@ func _move_selected_to_empty_category(slot_idx: int) -> bool:
 
 func _remove_selected_from_source() -> void:
 	if selected.get("source") == "draw":
+		var old_draw_size := draw_stack.size()
+		var removed_index: int = selected["index"]
 		draw_stack.remove_at(selected["index"])
+		_prepare_draw_refill_animation(old_draw_size, removed_index)
 	elif selected.get("source") == "board":
 		var col_idx: int = selected["col"]
 		var start: int = selected["start"]
 		var column: Array = columns[col_idx]
 		while column.size() > start:
 			column.remove_at(column.size() - 1)
-		_reveal_bottom_card(col_idx)
+			_reveal_bottom_card(col_idx)
+
+
+func _prepare_draw_refill_animation(old_draw_size: int, removed_index: int) -> void:
+	if removed_index != old_draw_size - 1:
+		return
+	var new_draw_size := draw_stack.size()
+	if old_draw_size <= 3 or new_draw_size < 3:
+		return
+	var new_first_visible_index := new_draw_size - 3
+	if new_first_visible_index < 0 or new_first_visible_index >= draw_stack.size():
+		return
+	var refill_card: Dictionary = draw_stack[new_first_visible_index]
+	var target_pos := _draw_card_position_for_size(new_first_visible_index, new_draw_size)
+	previous_card_positions[refill_card["id"]] = target_pos + Vector2(18.0, 0.0)
 
 
 func _reveal_bottom_card(col_idx: int) -> void:
@@ -1111,6 +2029,8 @@ func _reveal_bottom_card(col_idx: int) -> void:
 	var bottom: Dictionary = column[column.size() - 1]
 	if not bottom["face_up"]:
 		bottom["face_up"] = true
+		if is_inside_tree():
+			revealing_board_cards[bottom["id"]] = true
 
 
 func _collect_words(category: String, cards: Array) -> void:
@@ -1127,6 +2047,8 @@ func _collect_words(category: String, cards: Array) -> void:
 
 func _after_successful_move() -> void:
 	if selected.has("absorb_target_position") and drag_preview != null and is_instance_valid(drag_preview):
+		if selected.get("source") == "draw":
+			_refresh_draw_area_only()
 		_animate_category_absorb()
 		return
 	if drag_preview != null:
@@ -1229,7 +2151,7 @@ func _check_end_state() -> void:
 		return
 	if deck.is_empty() and draw_stack.is_empty() and not _has_any_legal_move():
 		game_over = true
-		status_text = "无牌可动"
+		status_text = "无法移动"
 
 
 func _is_win() -> bool:

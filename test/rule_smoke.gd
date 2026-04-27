@@ -4,6 +4,7 @@ extends SceneTree
 func _initialize() -> void:
 	var scene: Node = load("res://scenes/main.tscn").instantiate()
 	scene._ready()
+	scene.menu_active = false
 
 	var total_cards: int = _total_cards(scene)
 	_assert(scene.draw_stack.is_empty(), "area 1 starts empty")
@@ -15,6 +16,8 @@ func _initialize() -> void:
 	_assert(_board_card_count(scene) == 24, "expanded random board has 24 cards")
 	_assert(scene.deck.size() == total_cards - 24, "remaining cards start in deck")
 	_assert(_board_has_category(scene), "area 4 can contain category cards")
+	_assert(_bottom_visible_has_category(scene), "initial visible bottom cards include at least one category")
+	_assert(_bottom_visible_word_count(scene) >= 2, "initial visible bottom cards include at least two words")
 	_assert(_only_bottom_cards_face_up(scene), "only bottom cards are face up initially")
 	_assert(scene._card_text(scene._word("水浒传", false)) == "", "face-down card back has no pattern text")
 	_assert(scene._font_size_for_card_text("明清小说\n2/6", "category") < scene._font_size_for_card_text("宝石\n2/6", "category"), "long category names use smaller font")
@@ -131,6 +134,21 @@ func _board_has_category(scene: Node) -> bool:
 			if card["type"] == "category":
 				return true
 	return false
+
+
+func _bottom_visible_has_category(scene: Node) -> bool:
+	for column in scene.columns:
+		if not column.is_empty() and column[column.size() - 1]["type"] == "category":
+			return true
+	return false
+
+
+func _bottom_visible_word_count(scene: Node) -> int:
+	var count := 0
+	for column in scene.columns:
+		if not column.is_empty() and column[column.size() - 1]["type"] == "word":
+			count += 1
+	return count
 
 
 func _only_bottom_cards_face_up(scene: Node) -> bool:

@@ -16,9 +16,12 @@ const CATEGORIES_PER_GAME := 9
 const MAX_EIGHT_WORD_CATEGORIES := 1
 const MAX_SEVEN_WORD_CATEGORIES := 2
 const SOLVER_MAX_DEAL_ATTEMPTS := 80
-const SOLVER_MAX_STATES_PER_DEAL := 4000
+const SOLVER_MAX_STATES_PER_DEAL := 30000
 const SOLVER_MAX_SOLUTION_STEPS := 220
-const SOLVER_STEP_PADDING_RATIO := 0.18
+const SOLVER_DFS_SAMPLE_MIN := 5
+const SOLVER_DFS_SAMPLE_MAX := 10
+const SOLVER_DFS_PRIORITY_JITTER := 4.0
+const SOLVER_STEP_PADDING_RATIO := 0.25
 const SOLVER_STEP_PADDING_MIN := 16
 const DRAG_THRESHOLD := 8.0
 const ANIM_TIME := 0.18
@@ -322,6 +325,7 @@ func _select_category_candidate() -> Dictionary:
 	names.shuffle()
 	var selected_categories := {}
 	var used_words := {}
+	var used_conflict_tokens := {}
 	var used_lengths := {}
 	for category in names:
 		if selected_categories.size() >= CATEGORIES_PER_GAME:
@@ -332,10 +336,11 @@ func _select_category_candidate() -> Dictionary:
 			continue
 		if not _category_words_are_available(category, used_words):
 			continue
+		if not _category_conflict_tokens_are_available(category, used_conflict_tokens):
+			continue
 		selected_categories[category] = category_pool[category].duplicate()
 		used_lengths[category_pool[category].size()] = true
-		for word in category_pool[category]:
-			used_words[word] = true
+		_mark_category_words_used(category, used_words, used_conflict_tokens)
 	for category in names:
 		if selected_categories.size() >= CATEGORIES_PER_GAME:
 			break
@@ -345,9 +350,10 @@ func _select_category_candidate() -> Dictionary:
 			continue
 		if not _category_words_are_available(category, used_words):
 			continue
+		if not _category_conflict_tokens_are_available(category, used_conflict_tokens):
+			continue
 		selected_categories[category] = category_pool[category].duplicate()
-		for word in category_pool[category]:
-			used_words[word] = true
+		_mark_category_words_used(category, used_words, used_conflict_tokens)
 	return selected_categories
 
 
@@ -380,6 +386,43 @@ func _category_words_are_available(category: String, used_words: Dictionary) -> 
 		if used_words.has(word):
 			return false
 	return true
+
+
+func _category_conflict_tokens_are_available(category: String, used_conflict_tokens: Dictionary) -> bool:
+	for word in category_pool[category]:
+		for token in _word_conflict_tokens(word):
+			if used_conflict_tokens.has(token):
+				return false
+	return true
+
+
+func _mark_category_words_used(category: String, used_words: Dictionary, used_conflict_tokens: Dictionary) -> void:
+	for word in category_pool[category]:
+		used_words[word] = true
+		for token in _word_conflict_tokens(word):
+			used_conflict_tokens[token] = true
+
+
+func _word_conflict_tokens(word: String) -> Array[String]:
+	var tokens: Array[String] = []
+	var clean_word := word.strip_edges()
+	var length := clean_word.length()
+	if length <= 0:
+		return tokens
+	if length == 1:
+		tokens.append(clean_word)
+		return tokens
+	var first := clean_word.substr(0, 1)
+	var last := clean_word.substr(length - 1, 1)
+	if not _is_weak_conflict_token(first):
+		tokens.append(first)
+	if first != last and not _is_weak_conflict_token(last):
+		tokens.append(last)
+	return tokens
+
+
+func _is_weak_conflict_token(token: String) -> bool:
+	return token in ["子", "色", "人", "师", "家", "具", "品", "类", "术", "车", "机"]
 
 
 func _build_full_deck() -> Array:
@@ -534,14 +577,39 @@ func _set_card_at_location(location: Dictionary, card: Dictionary) -> void:
 		columns[int(location["col"])][int(location["index"])] = card
 
 
-func _solve_current_deal() -> Dictionary:
+func _solve_current_deal(max_solution_steps := SOLVER_MAX_SOLUTION_STEPS) -> Dictionary:
+	var sample_count := randi_range(SOLVER_DFS_SAMPLE_MIN, SOLVER_DFS_SAMPLE_MAX)
+	var solved_steps: Array[int] = []
+	var total_states := 0
+	for sample_idx in range(sample_count):
+		var state_budget: int = max(1200, int(SOLVER_MAX_STATES_PER_DEAL / sample_count))
+		var result := _solve_current_deal_dfs(max_solution_steps, state_budget)
+		total_states += int(result.get("states", 0))
+		if bool(result.get("solved", false)):
+			solved_steps.append(int(result.get("steps", 0)))
+	if solved_steps.is_empty():
+		return {"solved": false, "steps": 0, "states": total_states, "samples": sample_count}
+	var total_steps := 0
+	for step_count in solved_steps:
+		total_steps += step_count
+	var average_steps := int(round(float(total_steps) / float(solved_steps.size())))
+	return {
+		"solved": true,
+		"steps": average_steps,
+		"states": total_states,
+		"samples": sample_count,
+		"solved_samples": solved_steps.size(),
+	}
+
+
+func _solve_current_deal_dfs(max_solution_steps := SOLVER_MAX_SOLUTION_STEPS, state_budget := SOLVER_MAX_STATES_PER_DEAL) -> Dictionary:
 	var card_info := _solver_card_info()
 	var initial_state := _solver_initial_state()
 	var stack: Array[Dictionary] = [{"state": initial_state, "steps": 0}]
 	var best_seen := {}
 	var states_checked := 0
 
-	while not stack.is_empty() and states_checked < SOLVER_MAX_STATES_PER_DEAL:
+	while not stack.is_empty() and states_checked < state_budget:
 		var entry: Dictionary = stack.pop_back()
 		var state: Dictionary = entry["state"]
 		var steps: int = int(entry["steps"])
@@ -553,17 +621,24 @@ func _solve_current_deal() -> Dictionary:
 
 		if _solver_is_win(state):
 			return {"solved": true, "steps": steps, "states": states_checked}
-		if steps >= SOLVER_MAX_SOLUTION_STEPS:
+		if steps >= max_solution_steps:
 			continue
 
 		var next_entries := _solver_next_entries(state, card_info, steps)
-		next_entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			return int(a["priority"]) < int(b["priority"])
-		)
+		_solver_randomize_entry_order(next_entries)
 		for next_entry in next_entries:
 			stack.append(next_entry)
 
 	return {"solved": false, "steps": 0, "states": states_checked}
+
+
+func _solver_randomize_entry_order(entries: Array[Dictionary]) -> void:
+	for entry in entries:
+		entry["rank"] = float(entry["priority"]) + randf_range(-SOLVER_DFS_PRIORITY_JITTER, SOLVER_DFS_PRIORITY_JITTER)
+	entries.shuffle()
+	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return float(a["rank"]) < float(b["rank"])
+	)
 
 
 func _solver_card_info() -> Dictionary:
@@ -643,8 +718,25 @@ func _solver_add_source_moves(entries: Array[Dictionary], state: Dictionary, car
 		})
 
 	for source in sources:
+		var has_progress_move := _solver_has_category_progress_move(state, card_info, source)
 		_solver_add_category_moves(entries, state, card_info, source, steps)
-		_solver_add_column_moves(entries, state, card_info, source, steps)
+		if not has_progress_move:
+			_solver_add_column_moves(entries, state, card_info, source, steps)
+
+
+func _solver_has_category_progress_move(state: Dictionary, card_info: Dictionary, source: Dictionary) -> bool:
+	var group: Array = source["group"]
+	if group.is_empty():
+		return false
+	var category := _solver_group_category(group, card_info)
+	var active: Dictionary = state["active"]
+	var has_category := _solver_group_has_category(group, card_info)
+	if not has_category and active.has(category):
+		return true
+	return has_category \
+		and not active.has(category) \
+		and active.size() < MAX_CATEGORY_SLOTS \
+		and _solver_group_is_single_category(group, category, card_info)
 
 
 func _solver_add_category_moves(entries: Array[Dictionary], state: Dictionary, card_info: Dictionary, source: Dictionary, steps: int) -> void:
@@ -826,8 +918,11 @@ func _solver_state_key(state: Dictionary) -> String:
 	var parts: Array[String] = []
 	parts.append(_solver_join_ints(state["deck"]))
 	parts.append(_solver_join_ints(state["draw"]))
+	var column_parts: Array[String] = []
 	for col in state["cols"]:
-		parts.append(_solver_join_ints(col))
+		column_parts.append(_solver_join_ints(col))
+	column_parts.sort()
+	parts.append(_solver_join_strings(column_parts))
 	var active_keys: Array = state["active"].keys()
 	active_keys.sort()
 	var active_parts: Array[String] = []

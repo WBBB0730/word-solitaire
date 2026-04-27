@@ -11,8 +11,10 @@ func _initialize() -> void:
 	_assert(scene.active_order.is_empty(), "area 3 starts empty")
 	_assert(scene.categories.size() == scene.CATEGORIES_PER_GAME, "game randomly selects category subset")
 	_assert(_selected_words_are_unique(scene), "one word does not belong to two categories in a game")
+	_assert(_selected_categories_avoid_confusing_tokens(scene), "selected categories avoid confusing shared word tokens")
 	_assert(_selected_categories_have_varied_lengths(scene), "selected categories have varied word counts")
 	_assert(_selected_categories_respect_long_category_limits(scene), "selected categories limit long word groups")
+	_assert(scene._steps_for_solution(100) == 125, "solver step padding uses 25 percent")
 	_assert(scene.steps_left == scene._steps_for_solution(scene.last_solver_steps), "initial steps use solver padding without a fixed floor")
 	_assert(scene.last_solver_found, "initial deal is solver verified")
 	_assert(_board_card_count(scene) == 24, "expanded random board has 24 cards")
@@ -172,6 +174,17 @@ func _selected_words_are_unique(scene: Node) -> bool:
 			if seen.has(word):
 				return false
 			seen[word] = category
+	return true
+
+
+func _selected_categories_avoid_confusing_tokens(scene: Node) -> bool:
+	var seen_tokens := {}
+	for category in scene.categories.keys():
+		for word in scene.categories[category]:
+			for token in scene._word_conflict_tokens(word):
+				if seen_tokens.has(token) and seen_tokens[token] != category:
+					return false
+				seen_tokens[token] = category
 	return true
 
 

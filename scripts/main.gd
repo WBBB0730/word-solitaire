@@ -1,4 +1,13 @@
+## 手机端卡牌分类游戏主场景。
+##
+## 本脚本负责实时场景状态、界面渲染、动画和拖拽输入。
+## 类别抽样、求解器和音频播放拆到辅助脚本，主脚本只保留强 Godot 节点树耦合的编排逻辑。
 extends Control
+
+const CategorySelectorScript := preload("res://scripts/category_selector.gd")
+const CategoryLibraryScript := preload("res://scripts/category_library.gd")
+const DealSolverScript := preload("res://scripts/deal_solver.gd")
+const GameAudioScript := preload("res://scripts/game_audio.gd")
 
 const CARD_W := 78.0
 const CARD_H := 104.0
@@ -50,67 +59,34 @@ const MUSIC_VOLUME_DB := MUSIC_BASE_VOLUME_DB + MUSIC_TRIM_DB
 const CARD_FLIP_SFX_VOLUME_DB := SFX_BASE_VOLUME_DB + CARD_FLIP_SFX_TRIM_DB
 const BUTTON_CLICK_SFX_VOLUME_DB := SFX_BASE_VOLUME_DB + BUTTON_CLICK_SFX_TRIM_DB
 
-var category_pool := {
-	"明清小说": ["水浒传", "红楼梦", "西游记", "三国演义", "金瓶梅", "儒林外史"],
-	"宝石": ["翡翠", "玛瑙", "水晶", "珍珠", "琥珀", "钻石", "蓝宝石", "祖母绿"],
-	"收纳": ["收纳袋", "衣架", "挂钩", "置物架"],
-	"英雄": ["钢铁侠", "蝙蝠侠", "超人", "蜘蛛侠", "绿巨人", "黑寡妇", "雷神"],
-	"坚果": ["夏威夷果", "开心果", "松子", "杏仁"],
-	"单位": ["千克", "米", "秒", "升", "安培"],
-	"水果": ["苹果", "香蕉", "葡萄", "桃子", "菠萝", "荔枝", "西瓜"],
-	"文具": ["铅笔", "橡皮", "尺子"],
-	"乐器": ["钢琴", "小提琴", "长笛", "唢呐", "古筝", "琵琶"],
-	"天气": ["晴天", "暴雨", "彩虹", "台风"],
-	"城市": ["北京", "上海", "广州", "成都", "杭州", "西安"],
-	"花卉": ["牡丹", "荷花", "梅花"],
-	"饮品": ["绿茶", "咖啡", "豆浆", "牛奶", "橙汁", "可乐", "酸奶", "椰汁"],
-	"厨具": ["菜刀", "砧板", "铁锅", "蒸笼"],
-	"颜色": ["赤色", "橙色", "黄色", "绿色", "青色", "蓝色", "紫色"],
-	"交通工具": ["火车", "轮船", "地铁", "飞机", "单车", "公交车"],
-	"家具": ["桌子", "椅子", "沙发", "书柜", "床头柜", "衣柜", "茶几"],
-	"运动": ["足球", "篮球", "网球"],
-	"朝代": ["秦朝", "汉朝", "唐朝", "宋朝", "明朝", "清朝"],
-	"节日": ["春节", "元宵", "端午", "中秋"],
-	"山川": ["泰山", "黄山", "长江", "黄河", "西湖", "华山", "珠江", "峨眉山"],
-	"星体": ["太阳", "月球", "火星"],
-	"职业": ["医生", "教师", "律师", "厨师", "记者", "工程师"],
-	"电子产品": ["手机", "电脑", "平板", "相机", "耳机", "手表", "音箱"],
-	"服饰": ["衬衫", "外套", "围巾", "皮鞋"],
-	"餐具": ["筷子", "饭碗", "盘子", "叉子", "茶杯", "汤匙"],
-	"调味品": ["酱油", "食盐", "白糖"],
-	"书法工具": ["毛笔", "宣纸", "砚台", "印泥"],
-	"棋类": ["围棋", "象棋", "军棋", "跳棋", "五子棋", "国际象棋"],
-	"数学": ["加法", "分数", "圆周率", "方程", "坐标", "函数", "几何"],
-	"物理量": ["速度", "质量", "温度", "电流"],
-	"化学元素": ["氢", "碳", "氧", "铁", "铜", "金"],
-	"古诗人": ["李白", "杜甫", "王维", "白居易", "李清照", "苏轼", "辛弃疾", "陆游"],
-	"西方作家": ["莎士比亚", "雨果", "托尔斯泰", "海明威"],
-	"建筑": ["宫殿", "城墙", "拱桥", "灯塔", "剧院", "寺庙"],
-	"甜点": ["蛋糕", "布丁", "曲奇"],
-	"蔬菜": ["萝卜", "黄瓜", "番茄", "土豆", "菠菜", "茄子", "白菜"],
-	"中药": ["人参", "当归", "枸杞", "薄荷"],
-	"戏曲": ["京剧", "昆曲", "越剧", "黄梅戏", "豫剧", "评剧"],
-	"办公": ["文件夹", "订书机", "便签", "剪刀", "胶带", "印章", "回形针"],
-	"摄影": ["镜头", "快门", "光圈", "三脚架"],
-	"园艺": ["花盆", "铲子", "喷壶", "肥料", "种子", "剪枝剪"],
-	"茶具": ["茶壶", "茶盏", "茶盘"],
-	"航天": ["火箭", "卫星", "轨道", "空间站", "探测器", "宇航服", "返回舱", "月球车"],
-	"金融": ["股票", "基金", "债券", "汇率"],
-	"音乐术语": ["节拍", "旋律", "和弦", "音阶", "休止符", "调式"],
-}
+## 总类别牌库。每局会从这里抽取一部分类别。
+var category_pool := CategoryLibraryScript.get_category_pool()
 
+## 当前局选中的类别集合。
 var categories := {}
+## 当前局词语到类别的反向索引。
 var word_to_category := {}
+## 2 区未翻开的牌堆。
 var deck: Array = []
+## 1 区已翻开的牌堆，只有最上方一张可移动。
 var draw_stack: Array = []
+## 4 区四列牌，从上到下保存卡牌字典。
 var columns: Array = []
+## 3 区已激活类别及其已收集词语。
 var active_categories := {}
+## 3 区槽位顺序。类别完成后保留空字符串，不向左补位。
 var active_order: Array[String] = []
+## 当前拖拽来源选择数据。
 var selected := {}
+## 独立开始菜单是否正在显示。
 var menu_active := true
+## 剩余步数。抽牌和洗牌都消耗一步。
 var steps_left := STARTING_STEPS
+## 递增卡牌编号，用于动画追踪和求解器状态键。
 var next_card_id := 1
+## 胜利或失败弹窗出现后阻止继续输入。
 var game_over := false
+## 当前状态文案，用于结束弹窗和调试。
 var status_text := "点击牌堆开始"
 var previous_card_positions := {}
 var pending_spawn_positions := {}
@@ -138,6 +114,8 @@ var round_transition_active := false
 var round_transition_overlay: Control
 var round_transition_tween: Tween
 var pending_round_message := ""
+## 音频辅助对象。下面的公开音频字段会同步它，方便测试和调试。
+var audio_manager: RefCounted
 var music_player: AudioStreamPlayer
 var card_flip_sfx_stream: AudioStream
 var button_click_sfx_stream: AudioStream
@@ -146,6 +124,7 @@ var button_sfx_players: Array = []
 var next_sfx_player := 0
 var next_button_sfx_player := 0
 var audio_initialized := false
+## 当前随机牌局求解验证的诊断信息。
 var last_solver_attempts := 0
 var last_solver_steps := 0
 var last_solver_states := 0
@@ -161,6 +140,7 @@ var slot_color := Color(1.0, 1.0, 1.0, 0.20)
 var category_empty_slot_color := Color("#f6d86a", 0.42)
 
 
+## Godot 生命周期入口：初始化音频、生成首局并渲染。
 func _ready() -> void:
 	_init_audio()
 	randomize()
@@ -168,6 +148,7 @@ func _ready() -> void:
 	_render()
 
 
+## 处理全局拖拽过程中的移动和松手事件。
 func _input(event: InputEvent) -> void:
 	if round_transition_active:
 		return
@@ -181,91 +162,48 @@ func _input(event: InputEvent) -> void:
 		_finish_drag(event.global_position)
 
 
+## 推进持续中的抽牌飞行动画和洗牌动画。
 func _process(delta: float) -> void:
 	_update_draw_flights(delta)
 	_update_wash_flight(delta)
 
 
+## 初始化音频辅助对象。
 func _init_audio() -> void:
-	if audio_initialized:
-		return
-	audio_initialized = true
-
-	var music_stream: AudioStream = load(MUSIC_PATH)
-	if music_stream != null:
-		_set_audio_stream_loop(music_stream, true)
-		music_player = AudioStreamPlayer.new()
-		music_player.set_meta("audio_player", true)
-		music_player.name = "MusicPlayer"
-		music_player.stream = music_stream
-		music_player.volume_db = MUSIC_VOLUME_DB
-		add_child(music_player)
-		if music_player.is_inside_tree():
-			music_player.play()
-		else:
-			call_deferred("_play_background_music")
-
-	card_flip_sfx_stream = load(CARD_FLIP_SFX_PATH)
-	for i in range(SFX_PLAYER_COUNT):
-		var player := AudioStreamPlayer.new()
-		player.set_meta("audio_player", true)
-		player.name = "CardFlipSfx" + str(i + 1)
-		player.stream = card_flip_sfx_stream
-		player.volume_db = CARD_FLIP_SFX_VOLUME_DB
-		add_child(player)
-		sfx_players.append(player)
-
-	button_click_sfx_stream = load(BUTTON_CLICK_SFX_PATH)
-	for i in range(BUTTON_SFX_PLAYER_COUNT):
-		var player := AudioStreamPlayer.new()
-		player.set_meta("audio_player", true)
-		player.name = "ButtonClickSfx" + str(i + 1)
-		player.stream = button_click_sfx_stream
-		player.volume_db = BUTTON_CLICK_SFX_VOLUME_DB
-		add_child(player)
-		button_sfx_players.append(player)
+	if audio_manager == null:
+		audio_manager = GameAudioScript.new(self)
+	audio_manager.init_audio()
 
 
+## 兼容旧测试入口：设置音频流循环。
 func _set_audio_stream_loop(stream: AudioStream, enabled: bool) -> void:
-	for property in stream.get_property_list():
-		if property.get("name", "") == "loop":
-			stream.set("loop", enabled)
-			return
+	GameAudioScript.set_audio_stream_loop(stream, enabled)
 
 
+## 播放背景音乐，通常由延迟回调触发。
 func _play_background_music() -> void:
-	if is_instance_valid(music_player) and music_player.is_inside_tree() and not music_player.playing:
-		music_player.play()
+	if audio_manager != null:
+		audio_manager.play_background_music()
 
 
+## 播放翻牌/洗牌音效。
 func _play_card_flip_sfx() -> void:
-	if card_flip_sfx_stream == null or sfx_players.is_empty():
-		return
-	var player: AudioStreamPlayer = sfx_players[next_sfx_player % sfx_players.size()]
-	next_sfx_player += 1
-	if not is_instance_valid(player) or not player.is_inside_tree():
-		return
-	player.stop()
-	player.pitch_scale = randf_range(0.97, 1.03)
-	player.play()
+	if audio_manager != null:
+		audio_manager.play_card_flip_sfx()
 
 
+## 播放普通按钮点击音效。
 func _play_button_click_sfx() -> void:
-	if button_click_sfx_stream == null or button_sfx_players.is_empty():
-		return
-	var player: AudioStreamPlayer = button_sfx_players[next_button_sfx_player % button_sfx_players.size()]
-	next_button_sfx_player += 1
-	if not is_instance_valid(player) or not player.is_inside_tree():
-		return
-	player.stop()
-	player.pitch_scale = randf_range(0.98, 1.02)
-	player.play()
+	if audio_manager != null:
+		audio_manager.play_button_click_sfx()
 
 
+## 兼容旧测试入口：计算平衡后的音量。
 func _audio_balanced_volume_db(group_volume_db: float, asset_trim_db: float) -> float:
-	return group_volume_db + asset_trim_db
+	return GameAudioScript.balanced_volume_db(group_volume_db, asset_trim_db)
 
 
+## 生成一局经过求解器验证的牌局；如果所有尝试失败，则回退到默认步数。
 func _init_level() -> void:
 	last_solver_attempts = 0
 	last_solver_steps = 0
@@ -284,6 +222,7 @@ func _init_level() -> void:
 	steps_left = STARTING_STEPS
 
 
+## 为单次求解尝试构造一个随机发牌候选。
 func _prepare_random_deal() -> void:
 	deck.clear()
 	draw_stack.clear()
@@ -301,130 +240,79 @@ func _prepare_random_deal() -> void:
 	_deal_board_and_deck(all_cards)
 
 
+## 将求解器步数换算成玩家看到的步数预算。
 func _steps_for_solution(solution_steps: int) -> int:
 	var padding: int = max(SOLVER_STEP_PADDING_MIN, int(ceil(float(solution_steps) * SOLVER_STEP_PADDING_RATIO)))
 	return solution_steps + padding
 
 
+## 委托纯规则辅助脚本选择当前局类别。
 func _select_categories_for_game() -> Dictionary:
-	var best_selection := {}
-	var best_variety := -1
-	for attempt in range(30):
-		var selection := _select_category_candidate()
-		var variety := _word_count_variety(selection)
-		if selection.size() == CATEGORIES_PER_GAME and variety > best_variety:
-			best_selection = selection
-			best_variety = variety
-		if best_variety >= 4:
-			break
-	return best_selection
+	return CategorySelectorScript.select_categories_for_game(
+		category_pool,
+		CATEGORIES_PER_GAME,
+		MAX_EIGHT_WORD_CATEGORIES,
+		MAX_SEVEN_WORD_CATEGORIES
+	)
 
 
+## 兼容测试和调试脚本的薄包装。
 func _select_category_candidate() -> Dictionary:
-	var names: Array = category_pool.keys()
-	names.shuffle()
-	var selected_categories := {}
-	var used_words := {}
-	var used_conflict_tokens := {}
-	var used_lengths := {}
-	for category in names:
-		if selected_categories.size() >= CATEGORIES_PER_GAME:
-			break
-		if used_lengths.has(category_pool[category].size()) and used_lengths.size() < 5:
-			continue
-		if not _category_length_is_available(category, selected_categories):
-			continue
-		if not _category_words_are_available(category, used_words):
-			continue
-		if not _category_conflict_tokens_are_available(category, used_conflict_tokens):
-			continue
-		selected_categories[category] = category_pool[category].duplicate()
-		used_lengths[category_pool[category].size()] = true
-		_mark_category_words_used(category, used_words, used_conflict_tokens)
-	for category in names:
-		if selected_categories.size() >= CATEGORIES_PER_GAME:
-			break
-		if selected_categories.has(category):
-			continue
-		if not _category_length_is_available(category, selected_categories):
-			continue
-		if not _category_words_are_available(category, used_words):
-			continue
-		if not _category_conflict_tokens_are_available(category, used_conflict_tokens):
-			continue
-		selected_categories[category] = category_pool[category].duplicate()
-		_mark_category_words_used(category, used_words, used_conflict_tokens)
-	return selected_categories
+	return CategorySelectorScript._select_category_candidate(
+		category_pool,
+		CATEGORIES_PER_GAME,
+		MAX_EIGHT_WORD_CATEGORIES,
+		MAX_SEVEN_WORD_CATEGORIES
+	)
 
 
+## 兼容测试入口：检查类别长度限制。
 func _category_length_is_available(category: String, selected_categories: Dictionary) -> bool:
-	var length: int = category_pool[category].size()
-	if length == 8:
-		return _selected_category_length_count(selected_categories, 8) < MAX_EIGHT_WORD_CATEGORIES
-	if length == 7:
-		return _selected_category_length_count(selected_categories, 7) < MAX_SEVEN_WORD_CATEGORIES
-	return true
+	return CategorySelectorScript.category_length_is_available(
+		category,
+		category_pool,
+		selected_categories,
+		MAX_EIGHT_WORD_CATEGORIES,
+		MAX_SEVEN_WORD_CATEGORIES
+	)
 
 
+## 兼容测试入口：统计指定长度类别数量。
 func _selected_category_length_count(selected_categories: Dictionary, length: int) -> int:
-	var count := 0
-	for category in selected_categories.keys():
-		if selected_categories[category].size() == length:
-			count += 1
-	return count
+	return CategorySelectorScript.selected_category_length_count(selected_categories, length)
 
 
+## 兼容测试入口：统计类别长度多样性。
 func _word_count_variety(selection: Dictionary) -> int:
-	var lengths := {}
-	for category in selection.keys():
-		lengths[selection[category].size()] = true
-	return lengths.size()
+	return CategorySelectorScript.word_count_variety(selection)
 
 
+## 兼容测试入口：检查类别词语是否与已选类别重复。
 func _category_words_are_available(category: String, used_words: Dictionary) -> bool:
-	for word in category_pool[category]:
-		if used_words.has(word):
-			return false
-	return true
+	return CategorySelectorScript.category_words_are_available(category, category_pool, used_words)
 
 
+## 兼容测试入口：检查类别是否会产生跨类别混淆标记。
 func _category_conflict_tokens_are_available(category: String, used_conflict_tokens: Dictionary) -> bool:
-	for word in category_pool[category]:
-		for token in _word_conflict_tokens(word):
-			if used_conflict_tokens.has(token):
-				return false
-	return true
+	return CategorySelectorScript.category_conflict_tokens_are_available(category, category_pool, used_conflict_tokens)
 
 
+## 兼容测试入口：记录已选类别词语和混淆标记。
 func _mark_category_words_used(category: String, used_words: Dictionary, used_conflict_tokens: Dictionary) -> void:
-	for word in category_pool[category]:
-		used_words[word] = true
-		for token in _word_conflict_tokens(word):
-			used_conflict_tokens[token] = true
+	CategorySelectorScript.mark_category_words_used(category, category_pool, used_words, used_conflict_tokens)
 
 
+## 兼容测试入口：提取词语混淆标记。
 func _word_conflict_tokens(word: String) -> Array[String]:
-	var tokens: Array[String] = []
-	var clean_word := word.strip_edges()
-	var length := clean_word.length()
-	if length <= 0:
-		return tokens
-	if length == 1:
-		tokens.append(clean_word)
-		return tokens
-	var first := clean_word.substr(0, 1)
-	var last := clean_word.substr(length - 1, 1)
-	if not _is_weak_conflict_token(first):
-		tokens.append(first)
-	if first != last and not _is_weak_conflict_token(last):
-		tokens.append(last)
-	return tokens
+	return CategorySelectorScript.word_conflict_tokens(word)
 
 
+## 兼容测试入口：判断混淆标记是否过于宽泛。
 func _is_weak_conflict_token(token: String) -> bool:
-	return token in ["子", "色", "人", "师", "家", "具", "品", "类", "术", "车", "机"]
+	return CategorySelectorScript.is_weak_conflict_token(token)
 
 
+## 为当前局类别创建类别牌和所有词语牌。
 func _build_full_deck() -> Array:
 	var all_cards: Array = []
 	for category in categories.keys():
@@ -434,6 +322,7 @@ func _build_full_deck() -> Array:
 	return all_cards
 
 
+## 向 4 区发 24 张牌，剩余牌进入 2 区牌堆。
 func _deal_board_and_deck(all_cards: Array) -> void:
 	columns.clear()
 	for i in range(BOARD_COLUMN_COUNT):
@@ -463,11 +352,13 @@ func _deal_board_and_deck(all_cards: Array) -> void:
 			column[column.size() - 1]["face_up"] = true
 
 
+## 用最少的随机交换满足开局可玩性约束，尽量保持整体随机性。
 func _ensure_bottom_visible_opening_mix() -> void:
 	_ensure_bottom_visible_category()
 	_ensure_bottom_visible_words(2)
 
 
+## 确保开局四列底牌里至少有一张类别牌。
 func _ensure_bottom_visible_category() -> void:
 	if _bottom_visible_has_category():
 		return
@@ -492,6 +383,7 @@ func _ensure_bottom_visible_category() -> void:
 		columns[source_col][source_idx] = target_card
 
 
+## 确保开局四列底牌里至少有指定数量的词语牌。
 func _ensure_bottom_visible_words(min_word_count: int) -> void:
 	while _bottom_visible_count("word") < min_word_count:
 		var bottom_categories := _bottom_visible_locations("category")
@@ -503,6 +395,7 @@ func _ensure_bottom_visible_words(min_word_count: int) -> void:
 		_swap_location_cards(target, source)
 
 
+## 判断当前四列底牌是否已有类别牌。
 func _bottom_visible_has_category() -> bool:
 	return _bottom_visible_count("category") > 0
 
@@ -517,6 +410,7 @@ func _bottom_visible_count(card_type: String) -> int:
 	return count
 
 
+## 返回四列底牌中指定类型卡牌的位置。
 func _bottom_visible_locations(card_type: String) -> Array[Dictionary]:
 	var locations: Array[Dictionary] = []
 	for col_idx in range(columns.size()):
@@ -542,6 +436,7 @@ func _hidden_category_locations() -> Array[Dictionary]:
 	return _hidden_card_locations("category")
 
 
+## 返回被盖住的指定类型卡牌位置，用于开局交换。
 func _hidden_card_locations(card_type: String) -> Array[Dictionary]:
 	var locations: Array[Dictionary] = []
 	for col_idx in range(columns.size()):
@@ -557,6 +452,7 @@ func _hidden_card_locations(card_type: String) -> Array[Dictionary]:
 	return locations
 
 
+## 交换两个牌局位置上的卡牌。
 func _swap_location_cards(first: Dictionary, second: Dictionary) -> void:
 	var first_card: Dictionary = _card_at_location(first)
 	var second_card: Dictionary = _card_at_location(second)
@@ -577,378 +473,17 @@ func _set_card_at_location(location: Dictionary, card: Dictionary) -> void:
 		columns[int(location["col"])][int(location["index"])] = card
 
 
+## 兼容测试入口：运行随机深度优先求解器。
 func _solve_current_deal(max_solution_steps := SOLVER_MAX_SOLUTION_STEPS) -> Dictionary:
-	var sample_count := randi_range(SOLVER_DFS_SAMPLE_MIN, SOLVER_DFS_SAMPLE_MAX)
-	var solved_steps: Array[int] = []
-	var total_states := 0
-	for sample_idx in range(sample_count):
-		var state_budget: int = max(1200, int(SOLVER_MAX_STATES_PER_DEAL / sample_count))
-		var result := _solve_current_deal_dfs(max_solution_steps, state_budget)
-		total_states += int(result.get("states", 0))
-		if bool(result.get("solved", false)):
-			solved_steps.append(int(result.get("steps", 0)))
-	if solved_steps.is_empty():
-		return {"solved": false, "steps": 0, "states": total_states, "samples": sample_count}
-	var total_steps := 0
-	for step_count in solved_steps:
-		total_steps += step_count
-	var average_steps := int(round(float(total_steps) / float(solved_steps.size())))
-	return {
-		"solved": true,
-		"steps": average_steps,
-		"states": total_states,
-		"samples": sample_count,
-		"solved_samples": solved_steps.size(),
-	}
+	return DealSolverScript.new(self).solve(max_solution_steps)
 
 
+## 兼容测试入口：运行单次深度优先求解样本。
 func _solve_current_deal_dfs(max_solution_steps := SOLVER_MAX_SOLUTION_STEPS, state_budget := SOLVER_MAX_STATES_PER_DEAL) -> Dictionary:
-	var card_info := _solver_card_info()
-	var initial_state := _solver_initial_state()
-	var stack: Array[Dictionary] = [{"state": initial_state, "steps": 0}]
-	var best_seen := {}
-	var states_checked := 0
-
-	while not stack.is_empty() and states_checked < state_budget:
-		var entry: Dictionary = stack.pop_back()
-		var state: Dictionary = entry["state"]
-		var steps: int = int(entry["steps"])
-		var key := _solver_state_key(state)
-		if best_seen.has(key) and int(best_seen[key]) <= steps:
-			continue
-		best_seen[key] = steps
-		states_checked += 1
-
-		if _solver_is_win(state):
-			return {"solved": true, "steps": steps, "states": states_checked}
-		if steps >= max_solution_steps:
-			continue
-
-		var next_entries := _solver_next_entries(state, card_info, steps)
-		_solver_randomize_entry_order(next_entries)
-		for next_entry in next_entries:
-			stack.append(next_entry)
-
-	return {"solved": false, "steps": 0, "states": states_checked}
+	return DealSolverScript.new(self).solve_dfs(max_solution_steps, state_budget)
 
 
-func _solver_randomize_entry_order(entries: Array[Dictionary]) -> void:
-	for entry in entries:
-		entry["rank"] = float(entry["priority"]) + randf_range(-SOLVER_DFS_PRIORITY_JITTER, SOLVER_DFS_PRIORITY_JITTER)
-	entries.shuffle()
-	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return float(a["rank"]) < float(b["rank"])
-	)
-
-
-func _solver_card_info() -> Dictionary:
-	var info := {}
-	for card in deck:
-		_solver_add_card_info(info, card)
-	for column in columns:
-		for card in column:
-			_solver_add_card_info(info, card)
-	return info
-
-
-func _solver_add_card_info(info: Dictionary, card: Dictionary) -> void:
-	info[int(card["id"])] = {
-		"type": card["type"],
-		"name": card["name"],
-		"category": card["category"],
-	}
-
-
-func _solver_initial_state() -> Dictionary:
-	var state := {
-		"deck": [],
-		"draw": [],
-		"cols": [],
-		"active": {},
-	}
-	for card in deck:
-		state["deck"].append(int(card["id"]))
-	for column in columns:
-		var solver_col: Array[int] = []
-		for card in column:
-			var card_id := int(card["id"])
-			solver_col.append(card_id if bool(card["face_up"]) else -card_id)
-		state["cols"].append(solver_col)
-	return state
-
-
-func _solver_next_entries(state: Dictionary, card_info: Dictionary, steps: int) -> Array[Dictionary]:
-	var entries: Array[Dictionary] = []
-	_solver_add_source_moves(entries, state, card_info, steps)
-	var deck_cards: Array = state["deck"]
-	if not deck_cards.is_empty():
-		var next_state := _solver_clone_state(state)
-		var next_deck: Array = next_state["deck"]
-		var next_draw: Array = next_state["draw"]
-		next_draw.append(int(next_deck.pop_back()))
-		entries.append({"state": next_state, "steps": steps + 1, "priority": 1})
-	return entries
-
-
-func _solver_add_source_moves(entries: Array[Dictionary], state: Dictionary, card_info: Dictionary, steps: int) -> void:
-	var sources: Array[Dictionary] = []
-	var draw_cards: Array = state["draw"]
-	if not draw_cards.is_empty():
-		sources.append({
-			"source": "draw",
-			"source_col": -1,
-			"start": -1,
-			"group": [int(draw_cards[draw_cards.size() - 1])],
-		})
-
-	var cols: Array = state["cols"]
-	for col_idx in range(cols.size()):
-		var col: Array = cols[col_idx]
-		var start := _solver_group_start_index(col, card_info)
-		if start < 0:
-			continue
-		var group: Array[int] = []
-		for i in range(start, col.size()):
-			group.append(abs(int(col[i])))
-		sources.append({
-			"source": "board",
-			"source_col": col_idx,
-			"start": start,
-			"group": group,
-		})
-
-	for source in sources:
-		var has_progress_move := _solver_has_category_progress_move(state, card_info, source)
-		_solver_add_category_moves(entries, state, card_info, source, steps)
-		if not has_progress_move:
-			_solver_add_column_moves(entries, state, card_info, source, steps)
-
-
-func _solver_has_category_progress_move(state: Dictionary, card_info: Dictionary, source: Dictionary) -> bool:
-	var group: Array = source["group"]
-	if group.is_empty():
-		return false
-	var category := _solver_group_category(group, card_info)
-	var active: Dictionary = state["active"]
-	var has_category := _solver_group_has_category(group, card_info)
-	if not has_category and active.has(category):
-		return true
-	return has_category \
-		and not active.has(category) \
-		and active.size() < MAX_CATEGORY_SLOTS \
-		and _solver_group_is_single_category(group, category, card_info)
-
-
-func _solver_add_category_moves(entries: Array[Dictionary], state: Dictionary, card_info: Dictionary, source: Dictionary, steps: int) -> void:
-	var group: Array = source["group"]
-	if group.is_empty():
-		return
-	var category := _solver_group_category(group, card_info)
-	var active: Dictionary = state["active"]
-	var has_category := _solver_group_has_category(group, card_info)
-
-	if not has_category and active.has(category):
-		var next_state := _solver_clone_state(state)
-		_solver_remove_source(next_state, source)
-		var completed := _solver_collect_words(next_state, group, card_info)
-		entries.append({"state": next_state, "steps": steps + 1, "priority": 22 if completed else 14})
-		return
-
-	if has_category and not active.has(category) and active.size() < MAX_CATEGORY_SLOTS and _solver_group_is_single_category(group, category, card_info):
-		var next_state := _solver_clone_state(state)
-		_solver_remove_source(next_state, source)
-		next_state["active"][category] = {}
-		var completed := _solver_collect_words(next_state, group, card_info)
-		entries.append({"state": next_state, "steps": steps + 1, "priority": 20 if completed else 12})
-
-
-func _solver_add_column_moves(entries: Array[Dictionary], state: Dictionary, card_info: Dictionary, source: Dictionary, steps: int) -> void:
-	var group: Array = source["group"]
-	if group.is_empty():
-		return
-	var category := _solver_group_category(group, card_info)
-	var cols: Array = state["cols"]
-	var empty_target_used := false
-	for target_col in range(cols.size()):
-		if int(source["source_col"]) == target_col:
-			continue
-		var target: Array = cols[target_col]
-		var target_is_empty := target.is_empty()
-		if target_is_empty:
-			if empty_target_used:
-				continue
-			empty_target_used = true
-		elif not _solver_can_stack_on_column(target, category, card_info):
-			continue
-
-		var next_state := _solver_clone_state(state)
-		var reveals_card := _solver_source_reveals_card(next_state, source)
-		_solver_remove_source(next_state, source)
-		var next_cols: Array = next_state["cols"]
-		var next_target: Array = next_cols[target_col]
-		for card_id in group:
-			next_target.append(abs(int(card_id)))
-		var priority := 8 if reveals_card else 4
-		if not target_is_empty:
-			priority += 2
-		entries.append({"state": next_state, "steps": steps + 1, "priority": priority})
-
-
-func _solver_group_start_index(col: Array, card_info: Dictionary) -> int:
-	if col.is_empty():
-		return -1
-	var last_value := int(col[col.size() - 1])
-	if last_value < 0:
-		return -1
-	var last_info: Dictionary = card_info[abs(last_value)]
-	var category: String = last_info["category"]
-	var start := col.size() - 1
-	for i in range(col.size() - 2, -1, -1):
-		var value := int(col[i])
-		if value < 0:
-			break
-		var info: Dictionary = card_info[abs(value)]
-		if info["category"] != category:
-			break
-		if last_info["type"] == "word" and info["type"] == "category":
-			break
-		start = i
-	return start
-
-
-func _solver_can_stack_on_column(target: Array, category: String, card_info: Dictionary) -> bool:
-	if target.is_empty():
-		return true
-	var last_value := int(target[target.size() - 1])
-	if last_value < 0:
-		return false
-	var info: Dictionary = card_info[abs(last_value)]
-	return info["type"] == "word" and info["category"] == category
-
-
-func _solver_source_reveals_card(state: Dictionary, source: Dictionary) -> bool:
-	if source["source"] != "board":
-		return false
-	var cols: Array = state["cols"]
-	var col: Array = cols[int(source["source_col"])]
-	var start := int(source["start"])
-	return start > 0 and int(col[start - 1]) < 0
-
-
-func _solver_remove_source(state: Dictionary, source: Dictionary) -> void:
-	if source["source"] == "draw":
-		var draw_cards: Array = state["draw"]
-		draw_cards.pop_back()
-		return
-
-	var cols: Array = state["cols"]
-	var col: Array = cols[int(source["source_col"])]
-	var start := int(source["start"])
-	while col.size() > start:
-		col.remove_at(col.size() - 1)
-	if not col.is_empty() and int(col[col.size() - 1]) < 0:
-		col[col.size() - 1] = abs(int(col[col.size() - 1]))
-
-
-func _solver_collect_words(state: Dictionary, group: Array, card_info: Dictionary) -> bool:
-	if group.is_empty():
-		return false
-	var category := _solver_group_category(group, card_info)
-	var active: Dictionary = state["active"]
-	if not active.has(category):
-		return false
-	var collected: Dictionary = active[category]
-	for card_id in group:
-		var info: Dictionary = card_info[abs(int(card_id))]
-		if info["type"] == "word" and info["category"] == category:
-			collected[info["name"]] = true
-	if collected.size() >= categories[category].size():
-		active.erase(category)
-		return true
-	return false
-
-
-func _solver_group_category(group: Array, card_info: Dictionary) -> String:
-	if group.is_empty():
-		return ""
-	var info: Dictionary = card_info[abs(int(group[0]))]
-	return info["category"]
-
-
-func _solver_group_has_category(group: Array, card_info: Dictionary) -> bool:
-	for card_id in group:
-		var info: Dictionary = card_info[abs(int(card_id))]
-		if info["type"] == "category":
-			return true
-	return false
-
-
-func _solver_group_is_single_category(group: Array, category: String, card_info: Dictionary) -> bool:
-	for card_id in group:
-		var info: Dictionary = card_info[abs(int(card_id))]
-		if info["category"] != category:
-			return false
-	return true
-
-
-func _solver_clone_state(state: Dictionary) -> Dictionary:
-	var clone := {
-		"deck": state["deck"].duplicate(),
-		"draw": state["draw"].duplicate(),
-		"cols": [],
-		"active": {},
-	}
-	for col in state["cols"]:
-		clone["cols"].append(col.duplicate())
-	for category in state["active"].keys():
-		clone["active"][category] = state["active"][category].duplicate()
-	return clone
-
-
-func _solver_is_win(state: Dictionary) -> bool:
-	if not state["deck"].is_empty() or not state["draw"].is_empty() or not state["active"].is_empty():
-		return false
-	for col in state["cols"]:
-		if not col.is_empty():
-			return false
-	return true
-
-
-func _solver_state_key(state: Dictionary) -> String:
-	var parts: Array[String] = []
-	parts.append(_solver_join_ints(state["deck"]))
-	parts.append(_solver_join_ints(state["draw"]))
-	var column_parts: Array[String] = []
-	for col in state["cols"]:
-		column_parts.append(_solver_join_ints(col))
-	column_parts.sort()
-	parts.append(_solver_join_strings(column_parts))
-	var active_keys: Array = state["active"].keys()
-	active_keys.sort()
-	var active_parts: Array[String] = []
-	for category in active_keys:
-		var collected: Dictionary = state["active"][category]
-		var words: Array = collected.keys()
-		words.sort()
-		active_parts.append(str(category) + ":" + _solver_join_strings(words))
-	parts.append(_solver_join_strings(active_parts))
-	return "|".join(PackedStringArray(parts))
-
-
-func _solver_join_ints(values: Array) -> String:
-	var strings: Array[String] = []
-	for value in values:
-		strings.append(str(int(value)))
-	return ",".join(PackedStringArray(strings))
-
-
-func _solver_join_strings(values: Array) -> String:
-	var strings: Array[String] = []
-	for value in values:
-		strings.append(str(value))
-	return ",".join(PackedStringArray(strings))
-
-
+## 创建词语牌数据字典。
 func _word(card_name: String, face_up := true) -> Dictionary:
 	var card := {
 		"id": next_card_id,
@@ -961,6 +496,7 @@ func _word(card_name: String, face_up := true) -> Dictionary:
 	return card
 
 
+## 创建类别牌数据字典。
 func _category(category_name: String, face_up := true) -> Dictionary:
 	var card := {
 		"id": next_card_id,
@@ -973,6 +509,7 @@ func _category(category_name: String, face_up := true) -> Dictionary:
 	return card
 
 
+## 根据当前场景状态重建完整界面。
 func _render() -> void:
 	if not is_inside_tree():
 		return
@@ -1007,6 +544,7 @@ func _render() -> void:
 	previous_card_positions = next_card_positions
 
 
+## 重绘时保留音频节点和正在播放动画的临时节点。
 func _should_preserve_render_child(child: Node) -> bool:
 	if child.has_meta("audio_player"):
 		return true
@@ -1021,6 +559,7 @@ func _should_preserve_render_child(child: Node) -> bool:
 	return false
 
 
+## 渲染 1 区，包括向左展开的可见翻牌堆。
 func _render_draw_area(next_card_positions: Dictionary) -> void:
 	var visible_count = min(3, draw_stack.size())
 	for i in range(visible_count):
@@ -1041,6 +580,7 @@ func _render_draw_area(next_card_positions: Dictionary) -> void:
 		next_card_positions[card["id"]] = pos
 
 
+## 渲染 2 区牌堆、洗牌入口或空虚线框。
 func _render_deck_area() -> void:
 	var btn := Control.new()
 	btn.set_meta("deck_button", true)
@@ -1065,6 +605,7 @@ func _render_deck_area() -> void:
 	add_child(btn)
 
 
+## 渲染重开、首页按钮和剩余步数。
 func _render_top_controls() -> void:
 	var restart := _make_top_button("重开", Vector2(12, 8), "restart_button")
 	restart.pressed.connect(_on_restart_pressed)
@@ -1077,6 +618,7 @@ func _render_top_controls() -> void:
 	_add_label("剩余步数：" + str(steps_left), Vector2(12, 42), Vector2(116, 20), 13, Color(1, 1, 1, 0.82), false)
 
 
+## 创建真正的按钮控件，并绑定统一按压动效和按钮音效。
 func _make_top_button(text: String, pos: Vector2, meta_name: String) -> Button:
 	var btn := Button.new()
 	btn.set_meta(meta_name, true)
@@ -1094,6 +636,7 @@ func _make_top_button(text: String, pos: Vector2, meta_name: String) -> Button:
 	return btn
 
 
+## 渲染 3 区类别槽位，不添加悬停反馈。
 func _render_category_area() -> void:
 	for i in range(MAX_CATEGORY_SLOTS):
 		var pos := Vector2(_column_x(i), CATEGORY_Y)
@@ -1130,6 +673,7 @@ func _render_category_area() -> void:
 			add_child(slot)
 
 
+## 渲染 4 区列牌和被覆盖牌露出的文字条。
 func _render_board_area(next_card_positions: Dictionary) -> void:
 	for col_idx in range(columns.size()):
 		var x := _column_x(col_idx)
@@ -1180,6 +724,7 @@ func _render_board_area(next_card_positions: Dictionary) -> void:
 				_add_card_strip_label(btn, _card_text_for_board(column, card_idx))
 
 
+## 只刷新 1 区，用于吸收动画期间保持其它区域稳定。
 func _refresh_draw_area_only() -> void:
 	if not is_inside_tree():
 		return
@@ -1192,6 +737,7 @@ func _refresh_draw_area_only() -> void:
 		previous_card_positions[card_id] = next_card_positions[card_id]
 
 
+## 只刷新 4 区，用于吸收动画期间同步翻牌/补位。
 func _refresh_board_area_only() -> void:
 	if not is_inside_tree():
 		return
@@ -1204,6 +750,7 @@ func _refresh_board_area_only() -> void:
 		previous_card_positions[card_id] = next_card_positions[card_id]
 
 
+## 渲染胜利或失败弹窗。
 func _render_overlay() -> void:
 	var shade := ColorRect.new()
 	shade.color = Color(0, 0, 0, 0.35)
@@ -1233,6 +780,7 @@ func _render_overlay() -> void:
 	add_child(restart)
 
 
+## 渲染独立开始菜单页面。
 func _render_start_menu() -> void:
 	var start := Button.new()
 	start.set_meta("start_button", true)
@@ -1252,6 +800,7 @@ func _render_start_menu() -> void:
 	add_child(start)
 
 
+## 创建卡牌按钮节点；卡牌本身不使用悬停态。
 func _make_card_button(card: Dictionary, is_selected: bool, is_clickable: bool, override_text := "") -> Button:
 	var btn := Button.new()
 	btn.set_meta("card_id", card["id"])
@@ -1260,6 +809,7 @@ func _make_card_button(card: Dictionary, is_selected: bool, is_clickable: bool, 
 	return btn
 
 
+## 根据卡牌类型、朝向和文本配置卡牌视觉。
 func _configure_card_button_visual(btn: Button, card: Dictionary, is_selected: bool, override_text := "") -> void:
 	_clear_generated_button_labels(btn)
 	var display_text := override_text if override_text != "" else _card_text(card)
@@ -1286,6 +836,7 @@ func _configure_card_button_visual(btn: Button, card: Dictionary, is_selected: b
 		_add_category_card_labels(btn, String(lines[0]), progress, Color("#544b4b"))
 
 
+## 将同一套样式应用到按钮所有状态，避免悬停造成视觉变化。
 func _apply_button_style_states(btn: Button, style: StyleBoxFlat) -> void:
 	btn.add_theme_stylebox_override("normal", style)
 	btn.add_theme_stylebox_override("hover", style)
@@ -1294,6 +845,7 @@ func _apply_button_style_states(btn: Button, style: StyleBoxFlat) -> void:
 	btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
 
+## 给空牌堆或空类别槽添加虚线边框。
 func _add_dashed_outline(parent: Control, outline_size: Vector2, color: Color, thickness: float, dash: float, gap: float, meta_name := "deck_dash") -> void:
 	var right := outline_size.x - thickness
 	var bottom := outline_size.y - thickness
@@ -1321,11 +873,13 @@ func _add_dash(parent: Control, pos: Vector2, dash_size: Vector2, color: Color, 
 	parent.add_child(line)
 
 
+## 给牌堆绘制“牌堆/剩余若干张”标签。
 func _add_deck_count_labels(parent: Control) -> void:
 	_add_generated_label(parent, "牌堆", Vector2(5, 26), Vector2(68, 24), 17, Color.WHITE)
 	_add_generated_label(parent, "剩余" + str(deck.size()) + "张", Vector2(4, 52), Vector2(70, 22), 13, Color.WHITE)
 
 
+## 绘制类别牌名称和固定字号的进度数字。
 func _add_category_card_labels(parent: Control, category_name: String, progress: String, color: Color) -> void:
 	_add_generated_label(parent, category_name, Vector2(6, 20), Vector2(CARD_W - 12, 34), _font_size_for_card_text(category_name, "category"), color)
 	_add_generated_label(parent, progress, Vector2(6, 57), Vector2(CARD_W - 12, 24), 16, color)
@@ -1352,6 +906,7 @@ func _clear_generated_button_labels(parent: Control) -> void:
 			child.free()
 
 
+## 给普通按钮绑定按压缩放反馈。
 func _attach_button_press_feedback(btn: Button) -> void:
 	btn.pivot_offset = btn.size * 0.5
 	btn.button_down.connect(_on_button_feedback_down.bind(btn))
@@ -1379,6 +934,7 @@ func _on_button_feedback_up(btn: Button) -> void:
 	tween.tween_property(btn, "scale", Vector2.ONE, 0.12)
 
 
+## 播放 4 区新露出底牌的翻面动画。
 func _start_board_reveal_animation(btn: Button, card: Dictionary, selectable: bool, board_text: String) -> void:
 	_play_card_flip_sfx()
 	btn.disabled = true
@@ -1404,6 +960,7 @@ func _start_board_reveal_animation(btn: Button, card: Dictionary, selectable: bo
 	tween.chain().tween_callback(_finish_board_reveal_animation.bind(int(card["id"]), btn, face_btn, card, board_text, selectable))
 
 
+## 4 区翻面动画结束后，将临时牌面合并回真实按钮。
 func _finish_board_reveal_animation(card_id: int, btn: Button, face_btn: Button, card: Dictionary, board_text: String, selectable: bool) -> void:
 	revealing_board_cards.erase(card_id)
 	if is_instance_valid(face_btn):
@@ -1416,6 +973,7 @@ func _finish_board_reveal_animation(card_id: int, btn: Button, face_btn: Button,
 	btn.scale = Vector2.ONE
 
 
+## 处理普通卡牌节点的移动和出现动画。
 func _animate_card_node(node: Control, card: Dictionary, target_pos: Vector2) -> void:
 	var card_id: int = card["id"]
 	var suppress_move := suppress_next_move_animations.has(card_id)
@@ -1445,6 +1003,7 @@ func _animate_card_node(node: Control, card: Dictionary, target_pos: Vector2) ->
 		pending_draw_animations.erase(card_id)
 
 
+## 创建从 2 区飞到 1 区的抽牌翻面动画节点。
 func _spawn_draw_card_animation(card: Dictionary) -> void:
 	if not is_inside_tree():
 		if not _draw_stack_has_card_id(card["id"]):
@@ -1476,6 +1035,7 @@ func _spawn_draw_card_animation(card: Dictionary) -> void:
 	_retarget_draw_flights()
 
 
+## 连续抽牌时重新计算飞行目标，让动画衔接更自然。
 func _retarget_draw_flights() -> void:
 	var hidden_card_ids: Array[int] = []
 	var retarget_card_ids: Array[int] = []
@@ -1523,6 +1083,7 @@ func _draw_stack_index_for_card_id(card_id: int) -> int:
 	return -1
 
 
+## 每帧推进抽牌飞行动画。
 func _update_draw_flights(delta: float) -> void:
 	if draw_flights.is_empty():
 		return
@@ -1560,6 +1121,7 @@ func _update_draw_flights(delta: float) -> void:
 		_finish_draw_card_animation(card_id)
 
 
+## 抽牌飞行动画结束后，确保真实 1 区牌堆包含这张牌。
 func _finish_draw_card_animation(card_id: int) -> void:
 	if draw_animation_cards.has(card_id):
 		if not _draw_stack_has_card_id(card_id):
@@ -1568,6 +1130,7 @@ func _finish_draw_card_animation(card_id: int) -> void:
 	_render()
 
 
+## 清理指定抽牌动画的临时节点和状态。
 func _discard_draw_animation(card_id: int) -> void:
 	draw_animation_cards.erase(card_id)
 	animating_draw_cards.erase(card_id)
@@ -1585,6 +1148,7 @@ func _draw_stack_has_card_id(card_id: int) -> bool:
 	return false
 
 
+## 创建 1 区牌收拢并翻回 2 区的洗牌动画。
 func _spawn_wash_animation() -> void:
 	var visible_count: int = min(3, draw_stack.size())
 	if visible_count <= 0:
@@ -1625,6 +1189,7 @@ func _spawn_wash_animation() -> void:
 	}
 
 
+## 洗牌开始前清理仍在飞行的抽牌动画，避免牌面闪回。
 func _clear_draw_animations_for_wash() -> void:
 	for raw_card_id in draw_animation_nodes.keys():
 		_discard_draw_animation(int(raw_card_id))
@@ -1633,6 +1198,7 @@ func _clear_draw_animations_for_wash() -> void:
 	animating_draw_cards.clear()
 
 
+## 每帧推进洗牌动画。
 func _update_wash_flight(delta: float) -> void:
 	if wash_flight.is_empty():
 		return
@@ -1664,6 +1230,7 @@ func _update_wash_flight(delta: float) -> void:
 		_finish_wash_animation()
 
 
+## 更新洗牌动画中主牌的缩放和翻面时机。
 func _update_wash_keeper_visual(node: Control, t: float, eased: float) -> void:
 	var base_scale: float = lerp(0.98, 1.0, eased)
 	var depth_scale: float = 1.0 + 0.08 * sin(t * PI)
@@ -1672,6 +1239,7 @@ func _update_wash_keeper_visual(node: Control, t: float, eased: float) -> void:
 	node.rotation_degrees = 0.0
 
 
+## 更新洗牌动画中被收拢牌的淡出和位移。
 func _update_wash_under_card_visual(node: Control, t: float, eased: float) -> void:
 	var under_scale: float = lerp(1.0, 0.96, eased)
 	var flip_scale: float = _flip_scale_for_progress(t, WASH_FLIP_FACE_TIME)
@@ -1679,6 +1247,7 @@ func _update_wash_under_card_visual(node: Control, t: float, eased: float) -> vo
 	node.rotation_degrees = 0.0
 
 
+## 根据动画进度计算模拟翻牌的水平缩放。
 func _flip_scale_for_progress(t: float, flip_face_time: float) -> float:
 	if t < flip_face_time:
 		return max(0.08, cos((t / flip_face_time) * PI * 0.5))
@@ -1686,6 +1255,7 @@ func _flip_scale_for_progress(t: float, flip_face_time: float) -> float:
 	return max(0.08, sin(open_t * PI * 0.5))
 
 
+## 将洗牌动画中的牌切换为牌背。
 func _set_wash_card_back(node: Control) -> void:
 	if not is_instance_valid(node) or draw_stack.is_empty():
 		return
@@ -1695,6 +1265,7 @@ func _set_wash_card_back(node: Control) -> void:
 	(node as Button).disabled = true
 
 
+## 洗牌动画完成后，才真正重置牌堆并打乱顺序。
 func _finish_wash_animation() -> void:
 	for node in wash_animation_nodes:
 		if is_instance_valid(node):
@@ -1725,6 +1296,7 @@ func _find_deck_button_control_in_node(node: Node) -> Control:
 	return null
 
 
+## 返回卡牌正面应该显示的主文本。
 func _card_text(card: Dictionary) -> String:
 	if not card["face_up"]:
 		return ""
@@ -1734,6 +1306,7 @@ func _card_text(card: Dictionary) -> String:
 	return card["name"]
 
 
+## 返回 4 区卡牌文本，类别牌会显示当前同组词语数量。
 func _card_text_for_board(column: Array, card_idx: int) -> String:
 	var card: Dictionary = column[card_idx]
 	if not card["face_up"]:
@@ -1746,6 +1319,7 @@ func _card_text_for_board(column: Array, card_idx: int) -> String:
 	return card["name"]
 
 
+## 给被覆盖但已翻开的牌添加顶部露出文字条。
 func _add_card_strip_label(parent: Control, text: String) -> void:
 	var backing := Panel.new()
 	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1766,6 +1340,7 @@ func _add_card_strip_label(parent: Control, text: String) -> void:
 	parent.add_child(label)
 
 
+## 根据文本长度计算牌面动态字号。
 func _font_size_for_card_text(text: String, card_type: String) -> int:
 	var longest_line := _longest_text_line_length(text)
 	if card_type == "category":
@@ -1785,6 +1360,7 @@ func _font_size_for_card_text(text: String, card_type: String) -> int:
 	return 17
 
 
+## 根据文本长度计算露出文字条字号。
 func _font_size_for_strip_text(text: String) -> int:
 	var longest_line := _longest_text_line_length(text)
 	if longest_line >= 6:
@@ -1803,6 +1379,7 @@ func _longest_text_line_length(text: String) -> int:
 	return longest
 
 
+## 统计 4 区同组中已经翻开的词语牌数量。
 func _board_group_word_count(column: Array, card_idx: int) -> int:
 	if column.is_empty():
 		return 0
@@ -1828,6 +1405,7 @@ func _board_group_word_count(column: Array, card_idx: int) -> int:
 	return count
 
 
+## 返回牌堆为空时显示的洗牌/空牌堆文案。
 func _deck_button_text() -> String:
 	if deck.size() > 0:
 		return "牌堆\n剩余" + str(deck.size()) + "张"
@@ -1868,6 +1446,7 @@ func _style(fill: Color, border: Color, border_width: int, radius: int) -> Style
 	return style
 
 
+## 根据当前视口宽度计算第几列的水平坐标。
 func _column_x(col_idx: int) -> float:
 	var total_width := BOARD_COLUMN_COUNT * CARD_W + (BOARD_COLUMN_COUNT - 1) * COL_GAP
 	var viewport_width := 375.0
@@ -1877,10 +1456,12 @@ func _column_x(col_idx: int) -> float:
 	return start_x + col_idx * (CARD_W + COL_GAP)
 
 
+## 返回 1 区某张牌的显示位置。
 func _draw_card_position(card_index: int) -> Vector2:
 	return _draw_card_position_for_size(card_index, draw_stack.size())
 
 
+## 保持 1 区顶牌在最右侧，较早的可见牌依次向左展开。
 func _draw_card_position_for_size(card_index: int, stack_size: int) -> Vector2:
 	var visible_count: int = min(3, stack_size)
 	var first_visible_index: int = stack_size - visible_count
@@ -1888,10 +1469,12 @@ func _draw_card_position_for_size(card_index: int, stack_size: int) -> Vector2:
 	return Vector2(_column_x(2) - visible_offset * 18.0, DRAW_Y)
 
 
+## 返回 3 区槽位的落点判定矩形。
 func _category_slot_rect(slot_idx: int) -> Rect2:
 	return Rect2(Vector2(_column_x(slot_idx), CATEGORY_Y), Vector2(CARD_W, CARD_H))
 
 
+## 将 4 区列的落点判定向下延伸，提升手机拖拽容错。
 func _board_column_rect(col_idx: int) -> Rect2:
 	var column_height := CARD_H
 	if col_idx < columns.size() and not columns[col_idx].is_empty():
@@ -1899,6 +1482,7 @@ func _board_column_rect(col_idx: int) -> Rect2:
 	return Rect2(Vector2(_column_x(col_idx), BOARD_Y), Vector2(CARD_W, column_height + BOARD_DROP_EXTRA_BOTTOM))
 
 
+## 返回 2 区牌堆区域矩形。
 func _deck_rect() -> Rect2:
 	return Rect2(Vector2(_column_x(3), DRAW_Y), Vector2(78, 104))
 
@@ -1909,6 +1493,7 @@ func _on_deck_pressed() -> void:
 	_handle_deck_pressed()
 
 
+## 处理牌堆的鼠标/触摸输入。
 func _on_deck_gui_input(event: InputEvent) -> void:
 	if menu_active or game_over:
 		return
@@ -1920,6 +1505,7 @@ func _on_deck_gui_input(event: InputEvent) -> void:
 		accept_event()
 
 
+## 去重同一渲染帧里可能同时到达的鼠标/触摸事件。
 func _handle_deck_gui_pressed() -> void:
 	var current_frame := Engine.get_process_frames()
 	if last_deck_gui_press_frame == current_frame:
@@ -1928,6 +1514,7 @@ func _handle_deck_gui_pressed() -> void:
 	_handle_deck_pressed()
 
 
+## 处理牌堆点击：抽牌、启动洗牌动画，或提示牌堆已空。
 func _handle_deck_pressed() -> void:
 	if game_over or deck_animation_busy:
 		return
@@ -1964,6 +1551,7 @@ func _handle_deck_pressed() -> void:
 		return
 
 
+## 处理 1 区顶牌的拖拽输入。
 func _on_draw_card_gui_input(event: InputEvent, card_index: int) -> void:
 	if menu_active or game_over:
 		return
@@ -1978,6 +1566,7 @@ func _on_draw_card_gui_input(event: InputEvent, card_index: int) -> void:
 		_update_drag(event.position, event.global_position)
 
 
+## 处理 4 区可移动牌组的拖拽输入。
 func _on_board_card_gui_input(event: InputEvent, col_idx: int, card_idx: int) -> void:
 	if menu_active or game_over:
 		return
@@ -1993,6 +1582,7 @@ func _on_board_card_gui_input(event: InputEvent, col_idx: int, card_idx: int) ->
 		_update_drag(event.position, event.global_position)
 
 
+## 在超过拖拽阈值前，先把按下事件记录为拖拽候选。
 func _begin_drag_candidate(selection_data: Dictionary, local_pos: Vector2, global_pos: Vector2) -> void:
 	drag_candidate = selection_data
 	drag_candidate["pressed_local"] = local_pos
@@ -2001,6 +1591,7 @@ func _begin_drag_candidate(selection_data: Dictionary, local_pos: Vector2, globa
 	drag_offset = local_pos + Vector2(0, float(selection_data.get("drag_offset_y", 0.0)))
 
 
+## 启动并移动跟随手指的真实牌组预览。
 func _update_drag(_local_pos: Vector2, global_pos: Vector2) -> void:
 	if drag_candidate.is_empty():
 		return
@@ -2022,6 +1613,7 @@ func _update_drag(_local_pos: Vector2, global_pos: Vector2) -> void:
 		drag_preview.global_position = global_pos - drag_offset
 
 
+## 松手时尝试执行合法移动，否则播放取消动画。
 func _finish_drag(global_pos: Vector2) -> void:
 	if drag_candidate.is_empty():
 		return
@@ -2039,6 +1631,7 @@ func _finish_drag(global_pos: Vector2) -> void:
 	drag_candidate.clear()
 
 
+## 根据松手位置，把选中牌组路由到 3 区或 4 区。
 func _drop_selected_at(global_pos: Vector2) -> void:
 	var local_pos := get_global_transform().affine_inverse() * global_pos
 	for i in range(MAX_CATEGORY_SLOTS):
@@ -2067,6 +1660,7 @@ func _drop_selected_at(global_pos: Vector2) -> void:
 	_cancel_drag_drop()
 
 
+## 取消当前拖拽放置。
 func _cancel_drag_drop() -> void:
 	status_text = "不能放到这里"
 	if drag_preview != null and is_instance_valid(drag_preview):
@@ -2076,6 +1670,7 @@ func _cancel_drag_drop() -> void:
 		_render()
 
 
+## 非法放置时，将拖拽牌组动画退回来源位置。
 func _animate_drag_cancel() -> void:
 	returning_drag_preview = drag_preview
 	drag_preview = null
@@ -2088,6 +1683,7 @@ func _animate_drag_cancel() -> void:
 	tween.tween_callback(_finish_drag_cancel_animation)
 
 
+## 拖拽取消动画结束后恢复真实牌面。
 func _finish_drag_cancel_animation() -> void:
 	if is_instance_valid(returning_drag_preview):
 		returning_drag_preview.queue_free()
@@ -2096,6 +1692,7 @@ func _finish_drag_cancel_animation() -> void:
 	_render()
 
 
+## 构造拖拽过程中跟随指针移动的可见牌组。
 func _make_drag_preview(cards: Array) -> Control:
 	var holder := Control.new()
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2115,6 +1712,7 @@ func _make_drag_preview(cards: Array) -> Control:
 	return holder
 
 
+## 返回拖拽牌组中某张牌应该显示的文本。
 func _card_text_for_drag_stack(cards: Array, card_idx: int) -> String:
 	var card: Dictionary = cards[card_idx]
 	if not card["face_up"]:
@@ -2130,6 +1728,7 @@ func _card_text_for_drag_stack(cards: Array, card_idx: int) -> String:
 	return card["name"]
 
 
+## 拖拽开始后隐藏来源处真实卡牌，避免和预览重叠。
 func _hide_drag_source_cards(cards: Array) -> void:
 	var card_ids := {}
 	for card in cards:
@@ -2147,6 +1746,7 @@ func _hide_drag_source_cards_in_node(node: Node, card_ids: Dictionary) -> void:
 		_hide_drag_source_cards_in_node(child, card_ids)
 
 
+## 拖拽开始时给牌组一个轻微确认动效。
 func _pulse_drag_preview() -> void:
 	if drag_preview == null:
 		return
@@ -2157,6 +1757,7 @@ func _pulse_drag_preview() -> void:
 	tween.tween_property(drag_preview, "scale", Vector2.ONE, 0.12)
 
 
+## 启动幕布转场，用来遮住新牌局生成过程。
 func _start_new_round(message: String) -> void:
 	if round_transition_active:
 		return
@@ -2164,6 +1765,7 @@ func _start_new_round(message: String) -> void:
 	_play_round_close_transition()
 
 
+## 重置所有玩法状态，并构建下一局经过求解器验证的牌局。
 func _setup_new_round(message: String) -> void:
 	_clear_transient_interaction_state(false)
 	deck.clear()
@@ -2182,6 +1784,7 @@ func _setup_new_round(message: String) -> void:
 	_render()
 
 
+## 修改牌局状态前，先合上上下幕布。
 func _play_round_close_transition() -> void:
 	if not is_inside_tree():
 		_setup_new_round(pending_round_message)
@@ -2229,6 +1832,7 @@ func _play_round_close_transition() -> void:
 	tween.chain().tween_callback(_finish_round_close_transition.bind(overlay))
 
 
+## 幕布合上后，在遮挡下切换到新牌局。
 func _finish_round_close_transition(overlay: Control) -> void:
 	_kill_round_transition_tween()
 	if not is_instance_valid(overlay):
@@ -2238,6 +1842,7 @@ func _finish_round_close_transition(overlay: Control) -> void:
 	_start_round_transition_hold(overlay)
 
 
+## 幕布完全合上后短暂停顿，让切换不显得突兀。
 func _start_round_transition_hold(overlay: Control) -> void:
 	if not is_instance_valid(overlay):
 		round_transition_active = false
@@ -2249,6 +1854,7 @@ func _start_round_transition_hold(overlay: Control) -> void:
 	tween.tween_callback(_play_round_open_transition.bind(overlay))
 
 
+## 给幕布边缘添加细微明暗线，避免纯色块显得生硬。
 func _add_round_transition_seam(parent: Control, meta_name: String, at_bottom: bool, width: float) -> void:
 	var seam_y := parent.size.y - ROUND_TRANSITION_SEAM_H if at_bottom else 0.0
 	var shade := ColorRect.new()
@@ -2267,6 +1873,7 @@ func _add_round_transition_seam(parent: Control, meta_name: String, at_bottom: b
 	parent.add_child(highlight)
 
 
+## 新局面已经在幕布下渲染完成后，再打开幕布。
 func _play_round_open_transition(overlay: Control) -> void:
 	if not is_instance_valid(overlay):
 		round_transition_active = false
@@ -2288,6 +1895,7 @@ func _play_round_open_transition(overlay: Control) -> void:
 	tween.chain().tween_callback(_finish_round_open_transition.bind(overlay))
 
 
+## 幕布打开后清理转场节点并恢复输入。
 func _finish_round_open_transition(overlay: Control) -> void:
 	_kill_round_transition_tween()
 	if is_instance_valid(overlay):
@@ -2308,6 +1916,7 @@ func _find_transition_panel(node: Node, meta_name: String) -> ColorRect:
 	return null
 
 
+## 清理当前回合转场节点和补间动画。
 func _clear_round_transition() -> void:
 	_kill_round_transition_tween()
 	if is_instance_valid(round_transition_overlay):
@@ -2317,16 +1926,19 @@ func _clear_round_transition() -> void:
 	pending_round_message = ""
 
 
+## 安全停止当前幕布补间动画。
 func _kill_round_transition_tween() -> void:
 	if is_instance_valid(round_transition_tween):
 		round_transition_tween.kill()
 	round_transition_tween = null
 
 
+## 重新开始按钮回调。
 func _on_restart_pressed() -> void:
 	_start_new_round("点击牌堆开始")
 
 
+## 首页按钮回调。
 func _on_home_pressed() -> void:
 	_clear_transient_interaction_state()
 	menu_active = true
@@ -2335,10 +1947,12 @@ func _on_home_pressed() -> void:
 	_render()
 
 
+## 开始游戏按钮回调。
 func _on_start_pressed() -> void:
 	_start_new_round("开始游戏")
 
 
+## 清理动画、拖拽预览和其他临时交互状态。
 func _clear_transient_interaction_state(clear_transition := true) -> void:
 	if clear_transition:
 		_clear_round_transition()
@@ -2376,6 +1990,7 @@ func _clear_transient_interaction_state(clear_transition := true) -> void:
 	completing_category_name = ""
 
 
+## 只有 1 区最上方的牌能成为可移动来源。
 func _selection_for_draw(card_index: int) -> Dictionary:
 	if card_index != draw_stack.size() - 1:
 		return {}
@@ -2389,6 +2004,7 @@ func _selection_for_draw(card_index: int) -> Dictionary:
 	}
 
 
+## 返回 4 区某列底部可移动的同类别整组牌。
 func _selection_for_board(col_idx: int, card_idx: int) -> Dictionary:
 	if col_idx < 0 or col_idx >= columns.size():
 		return {}
@@ -2409,6 +2025,7 @@ func _selection_for_board(col_idx: int, card_idx: int) -> Dictionary:
 	}
 
 
+## 如果目标列允许，则把选中牌组移入 4 区。
 func _move_selected_to_column(col_idx: int) -> bool:
 	var cards: Array = selected.get("cards", [])
 	if cards.is_empty():
@@ -2432,6 +2049,7 @@ func _move_selected_to_column(col_idx: int) -> bool:
 	return true
 
 
+## 将选中的词语牌吸收到 3 区已有类别中。
 func _move_selected_to_active_category(category: String) -> bool:
 	var cards: Array = selected.get("cards", [])
 	if cards.is_empty():
@@ -2446,6 +2064,7 @@ func _move_selected_to_active_category(category: String) -> bool:
 	return true
 
 
+## 将包含类别牌的牌组放入 3 区空槽。
 func _move_selected_to_empty_category(slot_idx: int) -> bool:
 	var cards: Array = selected.get("cards", [])
 	if cards.is_empty():
@@ -2476,6 +2095,7 @@ func _move_selected_to_empty_category(slot_idx: int) -> bool:
 	return true
 
 
+## 从来源移除选中牌，并翻开新露出的 4 区牌。
 func _remove_selected_from_source() -> void:
 	if selected.get("source") == "draw":
 		var old_draw_size := draw_stack.size()
@@ -2491,6 +2111,7 @@ func _remove_selected_from_source() -> void:
 			_reveal_bottom_card(col_idx)
 
 
+## 1 区顶牌移走后，准备已翻开牌向左补位的动画。
 func _prepare_draw_refill_animation(old_draw_size: int, removed_index: int) -> void:
 	if removed_index != old_draw_size - 1:
 		return
@@ -2505,6 +2126,7 @@ func _prepare_draw_refill_animation(old_draw_size: int, removed_index: int) -> v
 	previous_card_positions[refill_card["id"]] = target_pos + Vector2(18.0, 0.0)
 
 
+## 翻开新露出的 4 区底牌，并标记它需要播放翻面动画。
 func _reveal_bottom_card(col_idx: int) -> void:
 	var column: Array = columns[col_idx]
 	if column.is_empty():
@@ -2516,6 +2138,7 @@ func _reveal_bottom_card(col_idx: int) -> void:
 			revealing_board_cards[bottom["id"]] = true
 
 
+## 吸收匹配词语牌，并返回类别是否已经集齐。
 func _collect_words(category: String, cards: Array, defer_completion := false) -> bool:
 	var state: Dictionary = active_categories[category]
 	var collected: Array = state["collected"]
@@ -2531,6 +2154,7 @@ func _collect_words(category: String, cards: Array, defer_completion := false) -
 	return false
 
 
+## 消耗步数前，选择本次移动后应该播放的动画路径。
 func _after_successful_move() -> void:
 	if selected.has("absorb_target_position") and drag_preview != null and is_instance_valid(drag_preview):
 		if selected.get("source") == "draw":
@@ -2550,6 +2174,7 @@ func _after_successful_move() -> void:
 	_consume_step(status_text)
 
 
+## 将词语牌动画吸收到 3 区类别牌中心。
 func _animate_category_absorb() -> void:
 	absorbing_drag_preview = drag_preview
 	drag_preview = null
@@ -2571,6 +2196,7 @@ func _animate_category_absorb() -> void:
 	tween.tween_callback(_finish_category_absorb_animation)
 
 
+## 词语吸收飞行动画结束，接着播放类别牌缩放反馈。
 func _finish_category_absorb_animation() -> void:
 	if is_instance_valid(absorbing_drag_preview):
 		absorbing_drag_preview.queue_free()
@@ -2580,12 +2206,14 @@ func _finish_category_absorb_animation() -> void:
 	_finish_category_absorb_pulse()
 
 
+## 吸收确认反馈结束后才扣除本次移动步数。
 func _finish_category_absorb_pulse() -> void:
 	pending_absorb_slot = -1
 	selected.clear()
 	_consume_step(status_text)
 
 
+## 类别刚集齐时，先播放确认反馈，再从 3 区移除。
 func _animate_completed_category_slot() -> void:
 	if drag_preview != null and is_instance_valid(drag_preview):
 		drag_preview.queue_free()
@@ -2600,6 +2228,7 @@ func _animate_completed_category_slot() -> void:
 	_finish_completed_category_pulse()
 
 
+## 类别完成的第一段确认反馈结束后，播放消失动画。
 func _finish_completed_category_pulse() -> void:
 	var category_button := _find_category_slot_button(completing_category_slot)
 	if category_button != null:
@@ -2615,6 +2244,7 @@ func _finish_completed_category_pulse() -> void:
 	_finish_completed_category_disappear()
 
 
+## 类别完成消失动画结束后，真正移除 3 区类别。
 func _finish_completed_category_disappear() -> void:
 	if completing_category_name != "":
 		active_categories.erase(completing_category_name)
@@ -2625,6 +2255,7 @@ func _finish_completed_category_disappear() -> void:
 	_consume_step(status_text)
 
 
+## 给接收词语的类别牌一个轻微的确认缩放反馈。
 func _pulse_absorb_category_slot(slot_idx: int, finished_callback: Callable = Callable()) -> bool:
 	var category_button := _find_category_slot_button(slot_idx)
 	if category_button == null:
@@ -2640,6 +2271,7 @@ func _pulse_absorb_category_slot(slot_idx: int, finished_callback: Callable = Ca
 	return true
 
 
+## 查找指定 3 区槽位的类别牌节点。
 func _find_category_slot_button(slot_idx: int) -> Control:
 	for child in get_children():
 		var found := _find_category_slot_button_in_node(child, slot_idx)
@@ -2658,11 +2290,13 @@ func _find_category_slot_button_in_node(node: Node, slot_idx: int) -> Control:
 	return null
 
 
+## 标记选中牌下次重绘不播放普通位移动画。
 func _suppress_selected_move_animations() -> void:
 	for card in selected.get("cards", []):
 		suppress_next_move_animations[card["id"]] = true
 
 
+## 消耗一步、检查终局状态，然后重绘。
 func _consume_step(message: String) -> void:
 	steps_left -= 1
 	status_text = message
@@ -2670,6 +2304,7 @@ func _consume_step(message: String) -> void:
 	_render()
 
 
+## 应用胜利、步数耗尽和无法移动三种终局条件。
 func _check_end_state() -> void:
 	if _is_win():
 		game_over = true
@@ -2684,6 +2319,7 @@ func _check_end_state() -> void:
 		status_text = "无法移动"
 
 
+## 判断当前是否已经清空所有牌和类别。
 func _is_win() -> bool:
 	if not deck.is_empty() or not draw_stack.is_empty() or not active_categories.is_empty():
 		return false
@@ -2693,6 +2329,7 @@ func _is_win() -> bool:
 	return true
 
 
+## 判断当前静态局面是否存在任意合法移动。
 func _has_any_legal_move() -> bool:
 	if _top_draw_has_move():
 		return true
@@ -2705,6 +2342,7 @@ func _has_any_legal_move() -> bool:
 	return false
 
 
+## 判断玩家是否还能抽牌、洗牌、等待动画，或执行合法移动。
 func _has_any_available_step() -> bool:
 	if _has_pending_card_motion():
 		return true
@@ -2715,6 +2353,7 @@ func _has_any_available_step() -> bool:
 	return _has_any_legal_move()
 
 
+## 判断是否还有会影响终局判定的动画未结束。
 func _has_pending_card_motion() -> bool:
 	return not draw_flights.is_empty() \
 		or not draw_animation_cards.is_empty() \
@@ -2726,12 +2365,14 @@ func _has_pending_card_motion() -> bool:
 		or completing_category_name != ""
 
 
+## 判断 1 区顶牌是否有合法去处。
 func _top_draw_has_move() -> bool:
 	if draw_stack.is_empty():
 		return false
 	return _group_has_move([draw_stack[draw_stack.size() - 1]], -1)
 
 
+## 判断某个牌组是否能移动到 3 区或其它 4 区列。
 func _group_has_move(cards: Array, source_col: int) -> bool:
 	var group_category := _group_category(cards)
 	if not _group_has_category(cards) and active_categories.has(group_category):
@@ -2750,16 +2391,19 @@ func _group_has_move(cards: Array, source_col: int) -> bool:
 	return false
 
 
+## 判断 3 区指定槽位是否已有类别。
 func _category_slot_occupied(slot_idx: int) -> bool:
 	return slot_idx < active_order.size() and active_order[slot_idx] != "" and active_categories.has(active_order[slot_idx])
 
 
+## 将类别写入 3 区指定槽位。
 func _set_category_slot(slot_idx: int, category: String) -> void:
 	while active_order.size() <= slot_idx:
 		active_order.append("")
 	active_order[slot_idx] = category
 
 
+## 清空 3 区中指定类别所在槽位。
 func _clear_category_slot(category: String) -> void:
 	for i in range(active_order.size()):
 		if active_order[i] == category:
@@ -2767,6 +2411,7 @@ func _clear_category_slot(category: String) -> void:
 			return
 
 
+## 判断 3 区是否还有空槽。
 func _has_empty_category_slot() -> bool:
 	if active_order.size() < MAX_CATEGORY_SLOTS:
 		return true
@@ -2776,6 +2421,7 @@ func _has_empty_category_slot() -> bool:
 	return false
 
 
+## 返回某列底部可移动的同类别牌组。
 func _bottom_group(column: Array) -> Array:
 	if column.is_empty():
 		return []
@@ -2785,6 +2431,7 @@ func _bottom_group(column: Array) -> Array:
 	return column.slice(start)
 
 
+## 返回 4 区列中可移动底部牌组的起点下标。
 func _group_start_index(column: Array) -> int:
 	if column.is_empty():
 		return -1
@@ -2803,12 +2450,14 @@ func _group_start_index(column: Array) -> int:
 	return start
 
 
+## 返回一组牌所属类别。
 func _group_category(cards: Array) -> String:
 	if cards.is_empty():
 		return ""
 	return cards[0]["category"]
 
 
+## 判断一组牌里是否包含类别牌。
 func _group_has_category(cards: Array) -> bool:
 	for card in cards:
 		if card["type"] == "category":
@@ -2816,6 +2465,7 @@ func _group_has_category(cards: Array) -> bool:
 	return false
 
 
+## 返回牌组的调试标签。
 func _group_label(cards: Array) -> String:
 	var names: Array[String] = []
 	for card in cards:
@@ -2823,6 +2473,7 @@ func _group_label(cards: Array) -> String:
 	return " / ".join(names)
 
 
+## 判断当前选中牌组是否包含指定卡牌编号。
 func _selected_has_card(card_id: int) -> bool:
 	if selected.is_empty():
 		return false

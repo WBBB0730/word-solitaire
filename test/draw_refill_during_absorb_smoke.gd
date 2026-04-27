@@ -32,6 +32,7 @@ func _process(_delta: float) -> bool:
 	scene.active_categories["水果"] = {"collected": []}
 	scene.active_order.clear()
 	scene.active_order.append("水果")
+	scene.steps_left = scene.STARTING_STEPS
 	scene.previous_card_positions.clear()
 	scene._render()
 

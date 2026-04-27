@@ -12,7 +12,9 @@ func _initialize() -> void:
 	_assert(scene.categories.size() == scene.CATEGORIES_PER_GAME, "game randomly selects category subset")
 	_assert(_selected_words_are_unique(scene), "one word does not belong to two categories in a game")
 	_assert(_selected_categories_have_varied_lengths(scene), "selected categories have varied word counts")
-	_assert(scene.steps_left == 120, "initial steps")
+	_assert(_selected_categories_respect_long_category_limits(scene), "selected categories limit long word groups")
+	_assert(scene.steps_left == scene._steps_for_solution(scene.last_solver_steps), "initial steps use solver padding without a fixed floor")
+	_assert(scene.last_solver_found, "initial deal is solver verified")
 	_assert(_board_card_count(scene) == 24, "expanded random board has 24 cards")
 	_assert(scene.deck.size() == total_cards - 24, "remaining cards start in deck")
 	_assert(_board_has_category(scene), "area 4 can contain category cards")
@@ -178,6 +180,18 @@ func _selected_categories_have_varied_lengths(scene: Node) -> bool:
 	for category in scene.categories.keys():
 		lengths[scene.categories[category].size()] = true
 	return lengths.size() >= 4
+
+
+func _selected_categories_respect_long_category_limits(scene: Node) -> bool:
+	var seven_count := 0
+	var eight_count := 0
+	for category in scene.categories.keys():
+		var length: int = scene.categories[category].size()
+		if length == 7:
+			seven_count += 1
+		elif length == 8:
+			eight_count += 1
+	return seven_count <= scene.MAX_SEVEN_WORD_CATEGORIES and eight_count <= scene.MAX_EIGHT_WORD_CATEGORIES
 
 
 func _assert(condition: bool, label: String) -> void:

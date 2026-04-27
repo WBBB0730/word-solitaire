@@ -3,6 +3,7 @@ extends Control
 const CARD_W := 78.0
 const CARD_H := 104.0
 const STACK_STEP := 24.0
+const BOARD_DROP_EXTRA_BOTTOM := 96.0
 const COL_GAP := 14.0
 const DRAW_Y := 24.0
 const CATEGORY_Y := 158.0
@@ -12,6 +13,13 @@ const STARTING_STEPS := 120
 const BOARD_COLUMN_COUNT := 4
 const BOARD_CARDS_PER_COLUMN := 6
 const CATEGORIES_PER_GAME := 9
+const MAX_EIGHT_WORD_CATEGORIES := 1
+const MAX_SEVEN_WORD_CATEGORIES := 2
+const SOLVER_MAX_DEAL_ATTEMPTS := 80
+const SOLVER_MAX_STATES_PER_DEAL := 4000
+const SOLVER_MAX_SOLUTION_STEPS := 220
+const SOLVER_STEP_PADDING_RATIO := 0.18
+const SOLVER_STEP_PADDING_MIN := 16
 const DRAG_THRESHOLD := 8.0
 const ANIM_TIME := 0.18
 const DRAW_ANIM_TIME := 0.28
@@ -111,6 +119,7 @@ var deck_animation_busy := false
 var draw_animation_nodes := {}
 var draw_animation_cards := {}
 var draw_flights := {}
+var last_deck_gui_press_frame := -1
 var wash_animation_nodes: Array[Control] = []
 var wash_animation_starts: Array[Vector2] = []
 var wash_flight := {}
@@ -120,6 +129,8 @@ var drag_offset := Vector2.ZERO
 var returning_drag_preview: Control
 var absorbing_drag_preview: Control
 var pending_absorb_slot := -1
+var completing_category_slot := -1
+var completing_category_name := ""
 var round_transition_active := false
 var round_transition_overlay: Control
 var round_transition_tween: Tween
@@ -132,6 +143,10 @@ var button_sfx_players: Array = []
 var next_sfx_player := 0
 var next_button_sfx_player := 0
 var audio_initialized := false
+var last_solver_attempts := 0
+var last_solver_steps := 0
+var last_solver_states := 0
+var last_solver_found := false
 
 var bg_color := Color("#a9d78e")
 var curtain_color := Color("#94c87c")
@@ -152,10 +167,6 @@ func _ready() -> void:
 
 func _input(event: InputEvent) -> void:
 	if round_transition_active:
-		return
-	if _is_deck_press_event(event):
-		_handle_deck_pressed()
-		get_viewport().set_input_as_handled()
 		return
 	if menu_active:
 		return
@@ -253,6 +264,24 @@ func _audio_balanced_volume_db(group_volume_db: float, asset_trim_db: float) -> 
 
 
 func _init_level() -> void:
+	last_solver_attempts = 0
+	last_solver_steps = 0
+	last_solver_states = 0
+	last_solver_found = false
+	for attempt in range(SOLVER_MAX_DEAL_ATTEMPTS):
+		_prepare_random_deal()
+		var solve_result := _solve_current_deal()
+		last_solver_attempts = attempt + 1
+		last_solver_states += int(solve_result.get("states", 0))
+		if bool(solve_result.get("solved", false)):
+			last_solver_found = true
+			last_solver_steps = int(solve_result.get("steps", STARTING_STEPS))
+			steps_left = _steps_for_solution(last_solver_steps)
+			return
+	steps_left = STARTING_STEPS
+
+
+func _prepare_random_deal() -> void:
 	deck.clear()
 	draw_stack.clear()
 	active_categories.clear()
@@ -267,6 +296,11 @@ func _init_level() -> void:
 	var all_cards := _build_full_deck()
 	all_cards.shuffle()
 	_deal_board_and_deck(all_cards)
+
+
+func _steps_for_solution(solution_steps: int) -> int:
+	var padding: int = max(SOLVER_STEP_PADDING_MIN, int(ceil(float(solution_steps) * SOLVER_STEP_PADDING_RATIO)))
+	return solution_steps + padding
 
 
 func _select_categories_for_game() -> Dictionary:
@@ -294,6 +328,8 @@ func _select_category_candidate() -> Dictionary:
 			break
 		if used_lengths.has(category_pool[category].size()) and used_lengths.size() < 5:
 			continue
+		if not _category_length_is_available(category, selected_categories):
+			continue
 		if not _category_words_are_available(category, used_words):
 			continue
 		selected_categories[category] = category_pool[category].duplicate()
@@ -305,12 +341,31 @@ func _select_category_candidate() -> Dictionary:
 			break
 		if selected_categories.has(category):
 			continue
+		if not _category_length_is_available(category, selected_categories):
+			continue
 		if not _category_words_are_available(category, used_words):
 			continue
 		selected_categories[category] = category_pool[category].duplicate()
 		for word in category_pool[category]:
 			used_words[word] = true
 	return selected_categories
+
+
+func _category_length_is_available(category: String, selected_categories: Dictionary) -> bool:
+	var length: int = category_pool[category].size()
+	if length == 8:
+		return _selected_category_length_count(selected_categories, 8) < MAX_EIGHT_WORD_CATEGORIES
+	if length == 7:
+		return _selected_category_length_count(selected_categories, 7) < MAX_SEVEN_WORD_CATEGORIES
+	return true
+
+
+func _selected_category_length_count(selected_categories: Dictionary, length: int) -> int:
+	var count := 0
+	for category in selected_categories.keys():
+		if selected_categories[category].size() == length:
+			count += 1
+	return count
 
 
 func _word_count_variety(selection: Dictionary) -> int:
@@ -477,6 +532,326 @@ func _set_card_at_location(location: Dictionary, card: Dictionary) -> void:
 		deck[int(location["index"])] = card
 	else:
 		columns[int(location["col"])][int(location["index"])] = card
+
+
+func _solve_current_deal() -> Dictionary:
+	var card_info := _solver_card_info()
+	var initial_state := _solver_initial_state()
+	var stack: Array[Dictionary] = [{"state": initial_state, "steps": 0}]
+	var best_seen := {}
+	var states_checked := 0
+
+	while not stack.is_empty() and states_checked < SOLVER_MAX_STATES_PER_DEAL:
+		var entry: Dictionary = stack.pop_back()
+		var state: Dictionary = entry["state"]
+		var steps: int = int(entry["steps"])
+		var key := _solver_state_key(state)
+		if best_seen.has(key) and int(best_seen[key]) <= steps:
+			continue
+		best_seen[key] = steps
+		states_checked += 1
+
+		if _solver_is_win(state):
+			return {"solved": true, "steps": steps, "states": states_checked}
+		if steps >= SOLVER_MAX_SOLUTION_STEPS:
+			continue
+
+		var next_entries := _solver_next_entries(state, card_info, steps)
+		next_entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return int(a["priority"]) < int(b["priority"])
+		)
+		for next_entry in next_entries:
+			stack.append(next_entry)
+
+	return {"solved": false, "steps": 0, "states": states_checked}
+
+
+func _solver_card_info() -> Dictionary:
+	var info := {}
+	for card in deck:
+		_solver_add_card_info(info, card)
+	for column in columns:
+		for card in column:
+			_solver_add_card_info(info, card)
+	return info
+
+
+func _solver_add_card_info(info: Dictionary, card: Dictionary) -> void:
+	info[int(card["id"])] = {
+		"type": card["type"],
+		"name": card["name"],
+		"category": card["category"],
+	}
+
+
+func _solver_initial_state() -> Dictionary:
+	var state := {
+		"deck": [],
+		"draw": [],
+		"cols": [],
+		"active": {},
+	}
+	for card in deck:
+		state["deck"].append(int(card["id"]))
+	for column in columns:
+		var solver_col: Array[int] = []
+		for card in column:
+			var card_id := int(card["id"])
+			solver_col.append(card_id if bool(card["face_up"]) else -card_id)
+		state["cols"].append(solver_col)
+	return state
+
+
+func _solver_next_entries(state: Dictionary, card_info: Dictionary, steps: int) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	_solver_add_source_moves(entries, state, card_info, steps)
+	var deck_cards: Array = state["deck"]
+	if not deck_cards.is_empty():
+		var next_state := _solver_clone_state(state)
+		var next_deck: Array = next_state["deck"]
+		var next_draw: Array = next_state["draw"]
+		next_draw.append(int(next_deck.pop_back()))
+		entries.append({"state": next_state, "steps": steps + 1, "priority": 1})
+	return entries
+
+
+func _solver_add_source_moves(entries: Array[Dictionary], state: Dictionary, card_info: Dictionary, steps: int) -> void:
+	var sources: Array[Dictionary] = []
+	var draw_cards: Array = state["draw"]
+	if not draw_cards.is_empty():
+		sources.append({
+			"source": "draw",
+			"source_col": -1,
+			"start": -1,
+			"group": [int(draw_cards[draw_cards.size() - 1])],
+		})
+
+	var cols: Array = state["cols"]
+	for col_idx in range(cols.size()):
+		var col: Array = cols[col_idx]
+		var start := _solver_group_start_index(col, card_info)
+		if start < 0:
+			continue
+		var group: Array[int] = []
+		for i in range(start, col.size()):
+			group.append(abs(int(col[i])))
+		sources.append({
+			"source": "board",
+			"source_col": col_idx,
+			"start": start,
+			"group": group,
+		})
+
+	for source in sources:
+		_solver_add_category_moves(entries, state, card_info, source, steps)
+		_solver_add_column_moves(entries, state, card_info, source, steps)
+
+
+func _solver_add_category_moves(entries: Array[Dictionary], state: Dictionary, card_info: Dictionary, source: Dictionary, steps: int) -> void:
+	var group: Array = source["group"]
+	if group.is_empty():
+		return
+	var category := _solver_group_category(group, card_info)
+	var active: Dictionary = state["active"]
+	var has_category := _solver_group_has_category(group, card_info)
+
+	if not has_category and active.has(category):
+		var next_state := _solver_clone_state(state)
+		_solver_remove_source(next_state, source)
+		var completed := _solver_collect_words(next_state, group, card_info)
+		entries.append({"state": next_state, "steps": steps + 1, "priority": 22 if completed else 14})
+		return
+
+	if has_category and not active.has(category) and active.size() < MAX_CATEGORY_SLOTS and _solver_group_is_single_category(group, category, card_info):
+		var next_state := _solver_clone_state(state)
+		_solver_remove_source(next_state, source)
+		next_state["active"][category] = {}
+		var completed := _solver_collect_words(next_state, group, card_info)
+		entries.append({"state": next_state, "steps": steps + 1, "priority": 20 if completed else 12})
+
+
+func _solver_add_column_moves(entries: Array[Dictionary], state: Dictionary, card_info: Dictionary, source: Dictionary, steps: int) -> void:
+	var group: Array = source["group"]
+	if group.is_empty():
+		return
+	var category := _solver_group_category(group, card_info)
+	var cols: Array = state["cols"]
+	var empty_target_used := false
+	for target_col in range(cols.size()):
+		if int(source["source_col"]) == target_col:
+			continue
+		var target: Array = cols[target_col]
+		var target_is_empty := target.is_empty()
+		if target_is_empty:
+			if empty_target_used:
+				continue
+			empty_target_used = true
+		elif not _solver_can_stack_on_column(target, category, card_info):
+			continue
+
+		var next_state := _solver_clone_state(state)
+		var reveals_card := _solver_source_reveals_card(next_state, source)
+		_solver_remove_source(next_state, source)
+		var next_cols: Array = next_state["cols"]
+		var next_target: Array = next_cols[target_col]
+		for card_id in group:
+			next_target.append(abs(int(card_id)))
+		var priority := 8 if reveals_card else 4
+		if not target_is_empty:
+			priority += 2
+		entries.append({"state": next_state, "steps": steps + 1, "priority": priority})
+
+
+func _solver_group_start_index(col: Array, card_info: Dictionary) -> int:
+	if col.is_empty():
+		return -1
+	var last_value := int(col[col.size() - 1])
+	if last_value < 0:
+		return -1
+	var last_info: Dictionary = card_info[abs(last_value)]
+	var category: String = last_info["category"]
+	var start := col.size() - 1
+	for i in range(col.size() - 2, -1, -1):
+		var value := int(col[i])
+		if value < 0:
+			break
+		var info: Dictionary = card_info[abs(value)]
+		if info["category"] != category:
+			break
+		if last_info["type"] == "word" and info["type"] == "category":
+			break
+		start = i
+	return start
+
+
+func _solver_can_stack_on_column(target: Array, category: String, card_info: Dictionary) -> bool:
+	if target.is_empty():
+		return true
+	var last_value := int(target[target.size() - 1])
+	if last_value < 0:
+		return false
+	var info: Dictionary = card_info[abs(last_value)]
+	return info["type"] == "word" and info["category"] == category
+
+
+func _solver_source_reveals_card(state: Dictionary, source: Dictionary) -> bool:
+	if source["source"] != "board":
+		return false
+	var cols: Array = state["cols"]
+	var col: Array = cols[int(source["source_col"])]
+	var start := int(source["start"])
+	return start > 0 and int(col[start - 1]) < 0
+
+
+func _solver_remove_source(state: Dictionary, source: Dictionary) -> void:
+	if source["source"] == "draw":
+		var draw_cards: Array = state["draw"]
+		draw_cards.pop_back()
+		return
+
+	var cols: Array = state["cols"]
+	var col: Array = cols[int(source["source_col"])]
+	var start := int(source["start"])
+	while col.size() > start:
+		col.remove_at(col.size() - 1)
+	if not col.is_empty() and int(col[col.size() - 1]) < 0:
+		col[col.size() - 1] = abs(int(col[col.size() - 1]))
+
+
+func _solver_collect_words(state: Dictionary, group: Array, card_info: Dictionary) -> bool:
+	if group.is_empty():
+		return false
+	var category := _solver_group_category(group, card_info)
+	var active: Dictionary = state["active"]
+	if not active.has(category):
+		return false
+	var collected: Dictionary = active[category]
+	for card_id in group:
+		var info: Dictionary = card_info[abs(int(card_id))]
+		if info["type"] == "word" and info["category"] == category:
+			collected[info["name"]] = true
+	if collected.size() >= categories[category].size():
+		active.erase(category)
+		return true
+	return false
+
+
+func _solver_group_category(group: Array, card_info: Dictionary) -> String:
+	if group.is_empty():
+		return ""
+	var info: Dictionary = card_info[abs(int(group[0]))]
+	return info["category"]
+
+
+func _solver_group_has_category(group: Array, card_info: Dictionary) -> bool:
+	for card_id in group:
+		var info: Dictionary = card_info[abs(int(card_id))]
+		if info["type"] == "category":
+			return true
+	return false
+
+
+func _solver_group_is_single_category(group: Array, category: String, card_info: Dictionary) -> bool:
+	for card_id in group:
+		var info: Dictionary = card_info[abs(int(card_id))]
+		if info["category"] != category:
+			return false
+	return true
+
+
+func _solver_clone_state(state: Dictionary) -> Dictionary:
+	var clone := {
+		"deck": state["deck"].duplicate(),
+		"draw": state["draw"].duplicate(),
+		"cols": [],
+		"active": {},
+	}
+	for col in state["cols"]:
+		clone["cols"].append(col.duplicate())
+	for category in state["active"].keys():
+		clone["active"][category] = state["active"][category].duplicate()
+	return clone
+
+
+func _solver_is_win(state: Dictionary) -> bool:
+	if not state["deck"].is_empty() or not state["draw"].is_empty() or not state["active"].is_empty():
+		return false
+	for col in state["cols"]:
+		if not col.is_empty():
+			return false
+	return true
+
+
+func _solver_state_key(state: Dictionary) -> String:
+	var parts: Array[String] = []
+	parts.append(_solver_join_ints(state["deck"]))
+	parts.append(_solver_join_ints(state["draw"]))
+	for col in state["cols"]:
+		parts.append(_solver_join_ints(col))
+	var active_keys: Array = state["active"].keys()
+	active_keys.sort()
+	var active_parts: Array[String] = []
+	for category in active_keys:
+		var collected: Dictionary = state["active"][category]
+		var words: Array = collected.keys()
+		words.sort()
+		active_parts.append(str(category) + ":" + _solver_join_strings(words))
+	parts.append(_solver_join_strings(active_parts))
+	return "|".join(PackedStringArray(parts))
+
+
+func _solver_join_ints(values: Array) -> String:
+	var strings: Array[String] = []
+	for value in values:
+		strings.append(str(int(value)))
+	return ",".join(PackedStringArray(strings))
+
+
+func _solver_join_strings(values: Array) -> String:
+	var strings: Array[String] = []
+	for value in values:
+		strings.append(str(value))
+	return ",".join(PackedStringArray(strings))
 
 
 func _word(card_name: String, face_up := true) -> Dictionary:
@@ -666,6 +1041,7 @@ func _render_board_area(next_card_positions: Dictionary) -> void:
 		var column: Array = columns[col_idx]
 		if column.is_empty():
 			var empty := Button.new()
+			empty.set_meta("board_empty_slot", true)
 			empty.position = Vector2(x, BOARD_Y)
 			empty.size = Vector2(CARD_W, CARD_H)
 			empty.text = "+"
@@ -695,6 +1071,7 @@ func _render_board_area(next_card_positions: Dictionary) -> void:
 				visual_card["face_up"] = false
 				visual_text = ""
 			var btn := _make_card_button(visual_card, is_selected, selectable and not is_revealing, visual_text)
+			btn.set_meta("board_card_button", true)
 			btn.position = pos
 			btn.size = Vector2(CARD_W, CARD_H)
 			btn.gui_input.connect(_on_board_card_gui_input.bind(col_idx, card_idx))
@@ -716,6 +1093,18 @@ func _refresh_draw_area_only() -> void:
 			child.free()
 	var next_card_positions := {}
 	_render_draw_area(next_card_positions)
+	for card_id in next_card_positions.keys():
+		previous_card_positions[card_id] = next_card_positions[card_id]
+
+
+func _refresh_board_area_only() -> void:
+	if not is_inside_tree():
+		return
+	for child in get_children():
+		if child is Control and (child.has_meta("board_card_button") or child.has_meta("board_empty_slot")):
+			child.free()
+	var next_card_positions := {}
+	_render_board_area(next_card_positions)
 	for card_id in next_card_positions.keys():
 		previous_card_positions[card_id] = next_card_positions[card_id]
 
@@ -902,6 +1291,7 @@ func _start_board_reveal_animation(btn: Button, card: Dictionary, selectable: bo
 	btn.pivot_offset = btn.size * 0.5
 	btn.scale = Vector2.ONE
 	var face_btn := _make_card_button(card, false, false, board_text)
+	face_btn.set_meta("board_card_button", true)
 	face_btn.disabled = true
 	face_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	face_btn.position = btn.position
@@ -1411,24 +1801,11 @@ func _board_column_rect(col_idx: int) -> Rect2:
 	var column_height := CARD_H
 	if col_idx < columns.size() and not columns[col_idx].is_empty():
 		column_height = CARD_H + (columns[col_idx].size() - 1) * STACK_STEP
-	return Rect2(Vector2(_column_x(col_idx), BOARD_Y), Vector2(CARD_W, column_height))
+	return Rect2(Vector2(_column_x(col_idx), BOARD_Y), Vector2(CARD_W, column_height + BOARD_DROP_EXTRA_BOTTOM))
 
 
 func _deck_rect() -> Rect2:
 	return Rect2(Vector2(_column_x(3), DRAW_Y), Vector2(78, 104))
-
-
-func _is_deck_press_event(event: InputEvent) -> bool:
-	if menu_active or game_over or round_transition_active:
-		return false
-	var press_position := Vector2.INF
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		press_position = event.position
-	elif event is InputEventScreenTouch and event.pressed:
-		press_position = event.position
-	else:
-		return false
-	return _deck_rect().has_point(press_position)
 
 
 func _on_deck_pressed() -> void:
@@ -1441,11 +1818,19 @@ func _on_deck_gui_input(event: InputEvent) -> void:
 	if menu_active or game_over:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		_handle_deck_pressed()
+		_handle_deck_gui_pressed()
 		accept_event()
 	elif event is InputEventScreenTouch and event.pressed:
-		_handle_deck_pressed()
+		_handle_deck_gui_pressed()
 		accept_event()
+
+
+func _handle_deck_gui_pressed() -> void:
+	var current_frame := Engine.get_process_frames()
+	if last_deck_gui_press_frame == current_frame:
+		return
+	last_deck_gui_press_frame = current_frame
+	_handle_deck_pressed()
 
 
 func _handle_deck_pressed() -> void:
@@ -1458,14 +1843,12 @@ func _handle_deck_pressed() -> void:
 		card["face_up"] = true
 		steps_left -= 1
 		status_text = "翻出：" + card["name"]
+		draw_stack.append(card)
 		_check_end_state()
 		if is_inside_tree():
 			animating_draw_cards[card["id"]] = true
-			draw_stack.append(card)
 			_render()
 			_spawn_draw_card_animation(card)
-		else:
-			draw_stack.append(card)
 		return
 	elif draw_stack.size() > 0:
 		_play_card_flip_sfx()
@@ -1894,6 +2277,8 @@ func _clear_transient_interaction_state(clear_transition := true) -> void:
 		absorbing_drag_preview.queue_free()
 	absorbing_drag_preview = null
 	pending_absorb_slot = -1
+	completing_category_slot = -1
+	completing_category_name = ""
 
 
 func _selection_for_draw(card_index: int) -> Dictionary:
@@ -1988,7 +2373,10 @@ func _move_selected_to_empty_category(slot_idx: int) -> bool:
 	_remove_selected_from_source()
 	active_categories[category] = {"collected": []}
 	_set_category_slot(slot_idx, category)
-	_collect_words(category, cards)
+	var completed := _collect_words(category, cards, true)
+	if completed:
+		selected["complete_category_slot"] = slot_idx
+		selected["complete_category_name"] = category
 	status_text = "类别进入 3 区：" + category
 	return true
 
@@ -2033,23 +2421,31 @@ func _reveal_bottom_card(col_idx: int) -> void:
 			revealing_board_cards[bottom["id"]] = true
 
 
-func _collect_words(category: String, cards: Array) -> void:
+func _collect_words(category: String, cards: Array, defer_completion := false) -> bool:
 	var state: Dictionary = active_categories[category]
 	var collected: Array = state["collected"]
 	for card in cards:
 		if card["type"] == "word" and card["category"] == category and not collected.has(card["name"]):
 			collected.append(card["name"])
 	if collected.size() >= categories[category].size():
-		active_categories.erase(category)
-		_clear_category_slot(category)
 		status_text = category + " 已集齐并移除"
+		if not defer_completion:
+			active_categories.erase(category)
+			_clear_category_slot(category)
+		return true
+	return false
 
 
 func _after_successful_move() -> void:
 	if selected.has("absorb_target_position") and drag_preview != null and is_instance_valid(drag_preview):
 		if selected.get("source") == "draw":
 			_refresh_draw_area_only()
+		elif selected.get("source") == "board":
+			_refresh_board_area_only()
 		_animate_category_absorb()
+		return
+	if selected.has("complete_category_slot"):
+		_animate_completed_category_slot()
 		return
 	if drag_preview != null:
 		drag_preview.queue_free()
@@ -2091,6 +2487,45 @@ func _finish_category_absorb_animation() -> void:
 
 func _finish_category_absorb_pulse() -> void:
 	pending_absorb_slot = -1
+	selected.clear()
+	_consume_step(status_text)
+
+
+func _animate_completed_category_slot() -> void:
+	if drag_preview != null and is_instance_valid(drag_preview):
+		drag_preview.queue_free()
+		drag_preview = null
+	_suppress_selected_move_animations()
+	completing_category_slot = int(selected.get("complete_category_slot", -1))
+	completing_category_name = String(selected.get("complete_category_name", ""))
+	status_text = completing_category_name + " 已集齐并移除"
+	_render()
+	if _pulse_absorb_category_slot(completing_category_slot, _finish_completed_category_pulse):
+		return
+	_finish_completed_category_pulse()
+
+
+func _finish_completed_category_pulse() -> void:
+	var category_button := _find_category_slot_button(completing_category_slot)
+	if category_button != null:
+		category_button.pivot_offset = category_button.size * 0.5
+		var tween := create_tween()
+		tween.set_parallel(true)
+		tween.set_trans(Tween.TRANS_CUBIC)
+		tween.set_ease(Tween.EASE_IN)
+		tween.tween_property(category_button, "scale", Vector2(0.84, 0.84), 0.12)
+		tween.tween_property(category_button, "modulate:a", 0.0, 0.12)
+		tween.chain().tween_callback(_finish_completed_category_disappear)
+		return
+	_finish_completed_category_disappear()
+
+
+func _finish_completed_category_disappear() -> void:
+	if completing_category_name != "":
+		active_categories.erase(completing_category_name)
+		_clear_category_slot(completing_category_name)
+	completing_category_slot = -1
+	completing_category_name = ""
 	selected.clear()
 	_consume_step(status_text)
 
@@ -2149,7 +2584,7 @@ func _check_end_state() -> void:
 		game_over = true
 		status_text = "步数用完"
 		return
-	if deck.is_empty() and draw_stack.is_empty() and not _has_any_legal_move():
+	if not _has_any_available_step():
 		game_over = true
 		status_text = "无法移动"
 
@@ -2173,6 +2608,27 @@ func _has_any_legal_move() -> bool:
 		if _group_has_move(group, col_idx):
 			return true
 	return false
+
+
+func _has_any_available_step() -> bool:
+	if _has_pending_card_motion():
+		return true
+	if not deck.is_empty():
+		return true
+	if not draw_stack.is_empty():
+		return true
+	return _has_any_legal_move()
+
+
+func _has_pending_card_motion() -> bool:
+	return not draw_flights.is_empty() \
+		or not draw_animation_cards.is_empty() \
+		or not wash_flight.is_empty() \
+		or not wash_animation_nodes.is_empty() \
+		or absorbing_drag_preview != null \
+		or returning_drag_preview != null \
+		or drag_preview != null \
+		or completing_category_name != ""
 
 
 func _top_draw_has_move() -> bool:

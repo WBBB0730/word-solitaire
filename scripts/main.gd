@@ -61,6 +61,8 @@ const BUTTON_CLICK_SFX_VOLUME_DB := SFX_BASE_VOLUME_DB + BUTTON_CLICK_SFX_TRIM_D
 
 ## 总类别牌库。每局会从这里抽取一部分类别。
 var category_pool := CategoryLibraryScript.get_category_pool()
+## 手写类别冲突组。同组类别不会被抽进同一局。
+var category_conflict_groups := CategoryLibraryScript.get_category_conflict_groups()
 
 ## 当前局选中的类别集合。
 var categories := {}
@@ -252,7 +254,8 @@ func _select_categories_for_game() -> Dictionary:
 		category_pool,
 		CATEGORIES_PER_GAME,
 		MAX_EIGHT_WORD_CATEGORIES,
-		MAX_SEVEN_WORD_CATEGORIES
+		MAX_SEVEN_WORD_CATEGORIES,
+		category_conflict_groups
 	)
 
 
@@ -262,7 +265,8 @@ func _select_category_candidate() -> Dictionary:
 		category_pool,
 		CATEGORIES_PER_GAME,
 		MAX_EIGHT_WORD_CATEGORIES,
-		MAX_SEVEN_WORD_CATEGORIES
+		MAX_SEVEN_WORD_CATEGORIES,
+		category_conflict_groups
 	)
 
 
@@ -297,9 +301,14 @@ func _category_conflict_tokens_are_available(category: String, used_conflict_tok
 	return CategorySelectorScript.category_conflict_tokens_are_available(category, category_pool, used_conflict_tokens)
 
 
+## 兼容测试入口：检查类别是否命中手写冲突组。
+func _category_conflict_groups_are_available(category: String, blocked_categories: Dictionary) -> bool:
+	return CategorySelectorScript.category_conflict_groups_are_available(category, blocked_categories)
+
+
 ## 兼容测试入口：记录已选类别词语和混淆标记。
-func _mark_category_words_used(category: String, used_words: Dictionary, used_conflict_tokens: Dictionary) -> void:
-	CategorySelectorScript.mark_category_words_used(category, category_pool, used_words, used_conflict_tokens)
+func _mark_category_words_used(category: String, used_words: Dictionary, used_conflict_tokens: Dictionary, blocked_categories := {}) -> void:
+	CategorySelectorScript.mark_category_words_used(category, category_pool, used_words, used_conflict_tokens, category_conflict_groups, blocked_categories)
 
 
 ## 兼容测试入口：提取词语混淆标记。

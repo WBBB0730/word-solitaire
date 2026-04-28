@@ -49,8 +49,8 @@
 ## 重要源码文件
 
 - `scripts/main.gd`：仍然是唯一直接挂在场景上的脚本。它负责 Godot 节点树、控件创建、拖拽、动画交接、回合幕布、胜负结算等强 UI 耦合逻辑。
-- `scripts/category_library.gd`：总牌库内容。后续扩充类别和词语时优先修改这里。
-- `scripts/category_selector.gd`：纯规则 helper。它不接触节点树，只根据 `category_pool` 选出本局类别。
+- `scripts/category_library.gd`：总牌库内容和手写冲突组。后续扩充类别和词语时优先修改这里。
+- `scripts/category_selector.gd`：纯规则 helper。它不接触节点树，负责生成本局 3-8 词数槽位、选择类别、抽样词语并过滤冲突。
 - `scripts/deal_solver.gd`：纯求解 helper。它读取当前牌局状态，转换成紧凑 id 状态后进行 DFS。
 - `scripts/game_audio.gd`：音频 helper。它创建 `AudioStreamPlayer` 节点并挂回主场景。
 

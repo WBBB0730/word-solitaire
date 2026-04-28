@@ -39,6 +39,7 @@
 - **Responsibilities:**
   - Stores the full category and word library.
   - Provides a copy of the library to `main.gd` so runtime selection can safely mutate dictionaries.
+  - Stores manual conflict groups for categories that should not appear in the same round.
   - Keeps large content edits out of the main scene script.
 
 ### CategorySelector
@@ -47,6 +48,7 @@
 - **Extends:** `RefCounted`
 - **Responsibilities:**
   - Randomly selects the category subset for a round.
+  - Generates fixed 3-8 word-count slots for each round, then samples words from categories that can satisfy those slots.
   - Enforces long-category difficulty caps.
   - Keeps word-count lengths varied when possible.
   - Rejects cross-category conflict tokens such as `茶几` and `茶盘` appearing in the same round.

@@ -1,0 +1,117 @@
+name: Deploy Web (Vercel)
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: vercel-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  export_and_deploy:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.6.2
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install System Dependencies
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl unzip fontconfig libfontconfig1 ca-certificates
+
+      - name: Cache Godot Export Templates
+        uses: actions/cache@v4
+        with:
+          path: /github/home/.local/share/godot/export_templates/4.6.2.stable
+          key: godot-export-templates-4.6.2-stable
+
+      - name: Verify Secrets
+        shell: bash
+        run: |
+          : "${VERCEL_TOKEN?Missing GitHub Actions secret VERCEL_TOKEN}"
+          : "${VERCEL_ORG_ID?Missing GitHub Actions secret VERCEL_ORG_ID}"
+          : "${VERCEL_PROJECT_ID?Missing GitHub Actions secret VERCEL_PROJECT_ID}"
+
+      - name: Install Godot Export Templates (4.6.2)
+        shell: bash
+        env:
+          GODOT_VERSION: "4.6.2"
+          GODOT_VERSION_DIR: "4.6.2.stable"
+        run: |
+          set -euo pipefail
+          TEMPLATES_DIR="$HOME/.local/share/godot/export_templates/$GODOT_VERSION_DIR"
+          if [ -f "$TEMPLATES_DIR/version.txt" ]; then
+            echo "Export templates already installed: $TEMPLATES_DIR"
+            exit 0
+          fi
+
+          mkdir -p "$TEMPLATES_DIR"
+          TMPDIR="$(mktemp -d)"
+          TPZ="$TMPDIR/templates.tpz"
+
+          download_templates() {
+            local url="$1"
+            echo "Downloading export templates: $url"
+            curl -L --fail --retry 3 --retry-delay 2 "$url" -o "$TPZ"
+          }
+
+          # Prefer the official download host; fall back to SourceForge mirror if needed.
+          download_templates "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" || \
+            download_templates "https://downloads.sourceforge.net/project/godot-engine.mirror/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+
+          # Guard against HTML/error pages masquerading as tpz.
+          if [ "$(head -c 2 "$TPZ" || true)" != "PK" ]; then
+            echo "Downloaded file is not a ZIP (tpz). First bytes:" >&2
+            head -c 64 "$TPZ" | xxd -g 1 >&2 || true
+            echo "Download URL may have returned HTML or an error page." >&2
+            exit 3
+          fi
+
+          unzip -q "$TPZ" -d "$TMPDIR/unpacked"
+          # tpz layouts differ: it may contain templates/<version>/..., <version>/..., or direct files.
+          if [ -f "$TMPDIR/unpacked/templates/$GODOT_VERSION_DIR/version.txt" ]; then
+            cp -R "$TMPDIR/unpacked/templates/$GODOT_VERSION_DIR/"* "$TEMPLATES_DIR/"
+          elif [ -f "$TMPDIR/unpacked/$GODOT_VERSION_DIR/version.txt" ]; then
+            cp -R "$TMPDIR/unpacked/$GODOT_VERSION_DIR/"* "$TEMPLATES_DIR/"
+          elif [ -f "$TMPDIR/unpacked/templates/version.txt" ]; then
+            cp -R "$TMPDIR/unpacked/templates/"* "$TEMPLATES_DIR/"
+          elif [ -f "$TMPDIR/unpacked/version.txt" ]; then
+            cp -R "$TMPDIR/unpacked/"* "$TEMPLATES_DIR/"
+          else
+            echo "Unexpected tpz layout; could not find version.txt" >&2
+            find "$TMPDIR/unpacked" -maxdepth 4 -type f -name version.txt -print >&2 || true
+            exit 4
+          fi
+
+          test -f "$TEMPLATES_DIR/version.txt"
+          test -f "$TEMPLATES_DIR/web_nothreads_debug.zip"
+          test -f "$TEMPLATES_DIR/web_nothreads_release.zip"
+          echo "Installed export templates to $TEMPLATES_DIR"
+
+      - name: Export Web
+        shell: bash
+        run: |
+          mkdir -p builds/web
+          # CI runner has a clean workspace: import all resources without running the game.
+          # --import implies --editor and --quit.
+          godot --headless --path . --import
+          godot --headless --path . --export-release "Web" builds/web/index.html
+
+      - name: Deploy To Vercel (Production)
+        shell: bash
+        run: |
+          npm i -g vercel
+          vercel deploy --prod --yes --token "$VERCEL_TOKEN" --cwd builds/web

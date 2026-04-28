@@ -4,6 +4,9 @@
 
 ```text
 .
+├── .github/
+│   └── workflows/
+│       └── deploy_web.yml            # push main 后自动导出 Web 并部署到 Vercel
 ├── AGENTS.md                         # Codex / 项目协作规则
 ├── MEMORY.md                         # 项目长期记忆、重要实现决策
 ├── PLAN.md                           # 早期实现计划与验证记录
@@ -40,10 +43,6 @@
 │   ├── tmp_complete_group_demo.gd    # 临时可复现局面脚本，保留用于后续验证
 │   ├── tmp_complete_group_demo.gd.uid
 │   └── tmp_complete_group_demo.tscn
-└── tools/
-    ├── export_all.sh                 # 一键导出所有平台
-    ├── export_debug.sh               # Debug 导出入口
-    └── export_release.sh             # Release 导出入口
 ```
 
 ## 重要源码文件

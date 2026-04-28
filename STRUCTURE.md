@@ -1,4 +1,4 @@
-# Godot Demo
+# Word Solitaire
 
 完整逻辑文件树见 [`docs/file_structure.md`](docs/file_structure.md)。
 

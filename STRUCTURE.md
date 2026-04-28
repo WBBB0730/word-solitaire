@@ -25,6 +25,8 @@
   - Loads the category library used by round generation.
   - Creates an initial deck and four board columns.
   - Renders the four gameplay areas.
+  - Positions gameplay in a centered 720-wide safe-area design frame for tall and wide mobile screens.
+  - Listens for runtime viewport resize events and re-renders layout without rebuilding the current deal.
   - Handles deck draw and wash-back.
   - Handles drag source detection and legal target placement.
   - Absorbs words into category cards in area 3.

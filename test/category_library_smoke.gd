@@ -8,7 +8,7 @@ const REQUIRED_CONFLICT_PAIRS := [
 	["安全用品", "消防器材"],
 	["旅游用品", "露营用品"],
 	["机场设施", "飞机部件"],
-	["编程语言", "数据结构"],
+	["网络术语", "软件工具"],
 	["宝石", "矿物"],
 	["感官", "声音"],
 	["节日", "民俗活动"],
@@ -27,8 +27,8 @@ func _initialize() -> void:
 	var ok := true
 	ok = _assert(pool.size() >= 200, "category pool should contain at least 200 categories") and ok
 	ok = _assert(_all_categories_have_minimum_source_words(pool), "every source category should contain at least 3 words") and ok
-	ok = _assert(_all_words_are_unique(pool), "words should not appear in more than one category") and ok
 	ok = _assert(_all_conflict_group_categories_exist(pool, conflict_groups), "all conflict groups should point to existing categories") and ok
+	ok = _assert(_duplicate_words_are_conflict_grouped(pool, conflict_groups), "duplicate source words should only appear across conflict-grouped categories") and ok
 	ok = _assert(_required_conflict_pairs_are_grouped(conflict_groups), "important related category pairs should be directly grouped") and ok
 	ok = _assert(_random_selection_respects_manual_groups_and_lengths(), "random selections should respect conflict groups and 3-8 length slots") and ok
 	if not ok:
@@ -47,15 +47,32 @@ func _all_categories_have_minimum_source_words(pool: Dictionary) -> bool:
 	return true
 
 
-func _all_words_are_unique(pool: Dictionary) -> bool:
-	var seen := {}
+func _duplicate_words_are_conflict_grouped(pool: Dictionary, conflict_groups: Array) -> bool:
+	var seen_by_word := {}
 	for category in pool.keys():
+		var words_in_category := {}
 		for word in pool[category]:
-			if seen.has(word):
-				push_error("Duplicate word: " + String(word) + " in " + String(category) + " and " + String(seen[word]))
+			if words_in_category.has(word):
+				push_error("Duplicate word inside one category: " + String(category) + " / " + String(word))
 				return false
-			seen[word] = category
+			words_in_category[word] = true
+			if not seen_by_word.has(word):
+				seen_by_word[word] = []
+			for other_category in seen_by_word[word]:
+				if not _categories_share_conflict_group(category, other_category, conflict_groups):
+					push_error("Duplicate word is not conflict-grouped: " + String(word) + " in " + String(category) + " and " + String(other_category))
+					return false
+			seen_by_word[word].append(category)
 	return true
+
+
+func _categories_share_conflict_group(category_a: String, category_b: String, conflict_groups: Array) -> bool:
+	if category_a == category_b:
+		return true
+	for group in conflict_groups:
+		if category_a in group and category_b in group:
+			return true
+	return false
 
 
 func _all_conflict_group_categories_exist(pool: Dictionary, conflict_groups: Array) -> bool:

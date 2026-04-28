@@ -9,14 +9,24 @@ const CategoryLibraryScript := preload("res://scripts/category_library.gd")
 const DealSolverScript := preload("res://scripts/deal_solver.gd")
 const GameAudioScript := preload("res://scripts/game_audio.gd")
 
-const CARD_W := 78.0
-const CARD_H := 104.0
-const STACK_STEP := 24.0
-const BOARD_DROP_EXTRA_BOTTOM := 96.0
-const COL_GAP := 14.0
-const DRAW_Y := 24.0
-const CATEGORY_Y := 158.0
-const BOARD_Y := 282.0
+const GAME_W := 720.0
+const GAME_H := 1280.0
+const UI_SCALE := 1.8
+const CARD_W := 150.0
+const CARD_H := 200.0
+const STACK_STEP := 46.0
+const BOARD_DROP_EXTRA_BOTTOM := 180.0
+const COL_GAP := 24.0
+const DRAW_Y := 54.0
+const CATEGORY_Y := 330.0
+const BOARD_Y := 570.0
+const DRAW_STACK_SPREAD := 32.0
+const TOP_CONTROL_X := 23.0
+const TOP_CONTROL_Y := 16.0
+const TOP_BUTTON_W := 96.0
+const TOP_BUTTON_H := 52.0
+const TOP_BUTTON_GAP := 14.0
+const STEPS_LABEL_Y := 88.0
 const MAX_CATEGORY_SLOTS := 4
 const STARTING_STEPS := 120
 const BOARD_COLUMN_COUNT := 4
@@ -131,6 +141,14 @@ var last_solver_attempts := 0
 var last_solver_steps := 0
 var last_solver_states := 0
 var last_solver_found := false
+## 是否允许运行时响应视口尺寸变化。
+var layout_resize_ready := false
+## 尺寸变化会合并到下一帧刷新，避免拖拽窗口时连续重建 UI。
+var layout_resize_refresh_pending := false
+## 上一次完成布局刷新时的视口尺寸。
+var last_layout_viewport_size := Vector2.ZERO
+## 上一次完成布局刷新时的 safe area。
+var last_layout_safe_rect := Rect2()
 
 var bg_color := Color("#a9d78e")
 var curtain_color := Color("#94c87c")
@@ -144,10 +162,20 @@ var category_empty_slot_color := Color("#f6d86a", 0.42)
 
 ## Godot 生命周期入口：初始化音频、生成首局并渲染。
 func _ready() -> void:
+	_configure_root_layout()
+	_bind_viewport_resize_signal()
 	_init_audio()
 	randomize()
 	_init_level()
 	_render()
+	_remember_layout_metrics()
+	layout_resize_ready = true
+
+
+## 捕捉 Control 自身尺寸变化，作为 viewport 信号之外的兜底。
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_RESIZED:
+		_request_layout_refresh()
 
 
 ## 处理全局拖拽过程中的移动和松手事件。
@@ -186,6 +214,94 @@ func _set_audio_stream_loop(stream: AudioStream, enabled: bool) -> void:
 func _play_background_music() -> void:
 	if audio_manager != null:
 		audio_manager.play_background_music()
+
+
+## 让根 Control 始终铺满当前 viewport，确保 NOTIFICATION_RESIZED 能稳定触发。
+func _configure_root_layout() -> void:
+	anchor_left = 0.0
+	anchor_top = 0.0
+	anchor_right = 1.0
+	anchor_bottom = 1.0
+	offset_left = 0.0
+	offset_top = 0.0
+	offset_right = 0.0
+	offset_bottom = 0.0
+
+
+## 监听运行时窗口/屏幕尺寸变化，手机旋转和桌面改窗口都会走这里。
+func _bind_viewport_resize_signal() -> void:
+	var viewport := get_viewport()
+	if viewport == null:
+		return
+	if not viewport.size_changed.is_connected(_on_viewport_size_changed):
+		viewport.size_changed.connect(_on_viewport_size_changed)
+
+
+## Viewport 尺寸变化回调。
+func _on_viewport_size_changed() -> void:
+	_request_layout_refresh()
+
+
+## 请求在下一帧刷新布局，避免同一帧内重复重建控件。
+func _request_layout_refresh() -> void:
+	if not layout_resize_ready or not is_inside_tree():
+		return
+	if layout_resize_refresh_pending:
+		return
+	layout_resize_refresh_pending = true
+	call_deferred("_apply_pending_layout_refresh")
+
+
+## 真正执行一次响应式布局刷新；只重排界面，不重新生成牌局。
+func _apply_pending_layout_refresh() -> void:
+	layout_resize_refresh_pending = false
+	if not layout_resize_ready or not is_inside_tree():
+		return
+	if not _layout_metrics_changed():
+		return
+	_cancel_drag_for_layout_refresh()
+	if round_transition_active:
+		_resize_round_transition_overlay()
+	_render()
+	_remember_layout_metrics()
+
+
+## 判断 viewport 或 safe area 是否真的变了。
+func _layout_metrics_changed() -> bool:
+	return get_viewport_rect().size != last_layout_viewport_size or _safe_viewport_rect() != last_layout_safe_rect
+
+
+## 记录刚刚完成渲染时使用的布局指标。
+func _remember_layout_metrics() -> void:
+	if not is_inside_tree():
+		return
+	last_layout_viewport_size = get_viewport_rect().size
+	last_layout_safe_rect = _safe_viewport_rect()
+
+
+## 尺寸变化时取消正在拖拽的手牌，避免源牌隐藏在旧位置。
+func _cancel_drag_for_layout_refresh() -> void:
+	drag_candidate.clear()
+	selected.clear()
+	if is_instance_valid(drag_preview):
+		drag_preview.queue_free()
+	drag_preview = null
+
+
+## 运行时改屏幕尺寸时，让转场幕布覆盖新的 viewport。
+func _resize_round_transition_overlay() -> void:
+	if not is_instance_valid(round_transition_overlay):
+		return
+	var viewport_size: Vector2 = get_viewport_rect().size
+	var half_height: float = ceil(viewport_size.y * 0.5)
+	round_transition_overlay.position = Vector2.ZERO
+	round_transition_overlay.size = viewport_size
+	var top := _find_transition_panel(round_transition_overlay, "round_transition_top")
+	if top != null:
+		top.size = Vector2(viewport_size.x, half_height + 2.0)
+	var bottom := _find_transition_panel(round_transition_overlay, "round_transition_bottom")
+	if bottom != null:
+		bottom.size = Vector2(viewport_size.x, viewport_size.y - half_height + 2.0)
 
 
 ## 播放翻牌/洗牌音效。
@@ -593,11 +709,11 @@ func _render_draw_area(next_card_positions: Dictionary) -> void:
 func _render_deck_area() -> void:
 	var btn := Control.new()
 	btn.set_meta("deck_button", true)
-	btn.position = Vector2(_column_x(3), DRAW_Y)
-	btn.size = Vector2(78, 104)
+	btn.position = Vector2(_column_x(3), _layout_y(DRAW_Y))
+	btn.size = Vector2(CARD_W, CARD_H)
 	btn.mouse_filter = Control.MOUSE_FILTER_STOP
 	var has_deck_cards := deck.size() > 0
-	var deck_style := _style(back_color, Color.WHITE, 4, 14) if has_deck_cards else _style(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 14)
+	var deck_style := _style(back_color, Color.WHITE, 6, 18) if has_deck_cards else _style(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 18)
 	btn.gui_input.connect(_on_deck_gui_input)
 	var surface := Panel.new()
 	surface.set_meta("deck_surface", true)
@@ -607,8 +723,8 @@ func _render_deck_area() -> void:
 	surface.add_theme_stylebox_override("panel", deck_style)
 	btn.add_child(surface)
 	if not has_deck_cards:
-		_add_dashed_outline(btn, btn.size, Color(1, 1, 1, 0.62), 3.0, 10.0, 7.0)
-		_add_generated_label(btn, _deck_button_text(), Vector2(4, 40), Vector2(70, 24), 16, Color(1, 1, 1, 0.72))
+		_add_dashed_outline(btn, btn.size, Color(1, 1, 1, 0.62), 5.0, 18.0, 12.0)
+		_add_generated_label(btn, _deck_button_text(), Vector2(8, 76), Vector2(CARD_W - 16, 42), _ui_font(16), Color(1, 1, 1, 0.72))
 	else:
 		_add_deck_count_labels(btn)
 	add_child(btn)
@@ -616,15 +732,17 @@ func _render_deck_area() -> void:
 
 ## 渲染重开、首页按钮和剩余步数。
 func _render_top_controls() -> void:
-	var restart := _make_top_button("重开", Vector2(12, 8), "restart_button")
+	var origin := _play_area_origin()
+	var restart := _make_top_button("重开", origin + Vector2(TOP_CONTROL_X, TOP_CONTROL_Y), "restart_button")
 	restart.pressed.connect(_on_restart_pressed)
 	add_child(restart)
 
-	var home := _make_top_button("首页", Vector2(70, 8), "home_button")
+	var home_x := TOP_CONTROL_X + TOP_BUTTON_W + TOP_BUTTON_GAP
+	var home := _make_top_button("首页", origin + Vector2(home_x, TOP_CONTROL_Y), "home_button")
 	home.pressed.connect(_on_home_pressed)
 	add_child(home)
 
-	_add_label("剩余步数：" + str(steps_left), Vector2(12, 42), Vector2(116, 20), 13, Color(1, 1, 1, 0.82), false)
+	_add_label("剩余步数：" + str(steps_left), origin + Vector2(TOP_CONTROL_X, STEPS_LABEL_Y), Vector2(260, 40), _ui_font(13), Color(1, 1, 1, 0.82), false)
 
 
 ## 创建真正的按钮控件，并绑定统一按压动效和按钮音效。
@@ -632,14 +750,14 @@ func _make_top_button(text: String, pos: Vector2, meta_name: String) -> Button:
 	var btn := Button.new()
 	btn.set_meta(meta_name, true)
 	btn.position = pos
-	btn.size = Vector2(50, 28)
+	btn.size = Vector2(TOP_BUTTON_W, TOP_BUTTON_H)
 	btn.text = text
-	btn.add_theme_font_size_override("font_size", 14)
+	btn.add_theme_font_size_override("font_size", _ui_font(14))
 	btn.add_theme_color_override("font_color", Color("#443b32"))
 	btn.add_theme_color_override("font_hover_color", Color("#443b32"))
 	btn.add_theme_color_override("font_pressed_color", Color("#443b32"))
 	btn.add_theme_color_override("font_focus_color", Color("#443b32"))
-	var style := _style(Color("#ffe08a"), card_border, 3, 8)
+	var style := _style(Color("#ffe08a"), card_border, 5, 12)
 	_apply_button_style_states(btn, style)
 	_attach_button_press_feedback(btn)
 	return btn
@@ -648,7 +766,7 @@ func _make_top_button(text: String, pos: Vector2, meta_name: String) -> Button:
 ## 渲染 3 区类别槽位，不添加悬停反馈。
 func _render_category_area() -> void:
 	for i in range(MAX_CATEGORY_SLOTS):
-		var pos := Vector2(_column_x(i), CATEGORY_Y)
+		var pos := Vector2(_column_x(i), _layout_y(CATEGORY_Y))
 		if i < active_order.size() and active_order[i] != "" and active_categories.has(active_order[i]):
 			var category: String = active_order[i]
 			var state: Dictionary = active_categories[category]
@@ -665,7 +783,7 @@ func _render_category_area() -> void:
 			btn.add_theme_color_override("font_hover_color", Color("#443b32"))
 			btn.add_theme_color_override("font_pressed_color", Color("#443b32"))
 			btn.add_theme_color_override("font_focus_color", Color("#443b32"))
-			var category_style := _style(category_color, card_border, 4, 10)
+			var category_style := _style(category_color, card_border, 6, 18)
 			_apply_button_style_states(btn, category_style)
 			_add_category_card_labels(btn, category, str(count) + "/" + str(total), Color("#443b32"))
 			add_child(btn)
@@ -676,9 +794,9 @@ func _render_category_area() -> void:
 			slot.size = Vector2(CARD_W, CARD_H)
 			slot.text = ""
 			slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			var slot_style := _style(category_empty_slot_color, Color(0, 0, 0, 0), 0, 10)
+			var slot_style := _style(category_empty_slot_color, Color(0, 0, 0, 0), 0, 18)
 			_apply_button_style_states(slot, slot_style)
-			_add_dashed_outline(slot, slot.size, Color("#ffe070", 0.86), 2.0, 8.0, 6.0, "category_slot_dash")
+			_add_dashed_outline(slot, slot.size, Color("#ffe070", 0.86), 4.0, 14.0, 10.0, "category_slot_dash")
 			add_child(slot)
 
 
@@ -686,27 +804,28 @@ func _render_category_area() -> void:
 func _render_board_area(next_card_positions: Dictionary) -> void:
 	for col_idx in range(columns.size()):
 		var x := _column_x(col_idx)
+		var board_y := _layout_y(BOARD_Y)
 		var column: Array = columns[col_idx]
 		if column.is_empty():
 			var empty := Button.new()
 			empty.set_meta("board_empty_slot", true)
-			empty.position = Vector2(x, BOARD_Y)
+			empty.position = Vector2(x, board_y)
 			empty.size = Vector2(CARD_W, CARD_H)
 			empty.text = "+"
 			empty.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			empty.add_theme_font_size_override("font_size", 30)
+			empty.add_theme_font_size_override("font_size", _ui_font(30))
 			empty.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
 			empty.add_theme_color_override("font_hover_color", Color(1, 1, 1, 0.45))
 			empty.add_theme_color_override("font_pressed_color", Color(1, 1, 1, 0.45))
 			empty.add_theme_color_override("font_focus_color", Color(1, 1, 1, 0.45))
-			var empty_style := _style(slot_color, Color(1, 1, 1, 0.35), 2, 10)
+			var empty_style := _style(slot_color, Color(1, 1, 1, 0.35), 4, 18)
 			_apply_button_style_states(empty, empty_style)
 			add_child(empty)
 			continue
 
 		for card_idx in range(column.size()):
 			var card: Dictionary = column[card_idx]
-			var pos := Vector2(x, BOARD_Y + card_idx * STACK_STEP)
+			var pos := Vector2(x, board_y + card_idx * STACK_STEP)
 			var is_selected: bool = _selected_has_card(card["id"])
 			var selectable: bool = bool(card["face_up"]) and card_idx >= _group_start_index(column)
 			var is_revealing: bool = revealing_board_cards.has(card["id"])
@@ -767,22 +886,22 @@ func _render_overlay() -> void:
 	add_child(shade)
 
 	var panel := Panel.new()
-	panel.position = Vector2(42, 238)
-	panel.size = Vector2(291, 150)
-	panel.add_theme_stylebox_override("panel", _style(Color("#fff7dc"), card_border, 4, 14))
+	panel.size = Vector2(500, 230)
+	panel.position = _center_in_safe_area(panel.size)
+	panel.add_theme_stylebox_override("panel", _style(Color("#fff7dc"), card_border, 6, 22))
 	add_child(panel)
 
-	_add_label(status_text, Vector2(60, 268), Vector2(255, 42), 24, Color("#352f2b"), true)
+	_add_label(status_text, panel.position + Vector2(40, 54), Vector2(420, 64), _ui_font(24), Color("#352f2b"), true)
 	var restart := Button.new()
-	restart.position = Vector2(118, 326)
-	restart.size = Vector2(140, 40)
+	restart.size = Vector2(220, 64)
+	restart.position = panel.position + Vector2((panel.size.x - restart.size.x) * 0.5, 140)
 	restart.text = "再来一局"
-	restart.add_theme_font_size_override("font_size", 20)
+	restart.add_theme_font_size_override("font_size", _ui_font(20))
 	restart.add_theme_color_override("font_color", Color("#544b4b"))
 	restart.add_theme_color_override("font_hover_color", Color("#544b4b"))
 	restart.add_theme_color_override("font_pressed_color", Color("#544b4b"))
 	restart.add_theme_color_override("font_focus_color", Color("#544b4b"))
-	var restart_style := _style(Color("#ffe08a"), card_border, 3, 10)
+	var restart_style := _style(Color("#ffe08a"), card_border, 5, 14)
 	_apply_button_style_states(restart, restart_style)
 	restart.pressed.connect(_on_restart_pressed)
 	_attach_button_press_feedback(restart)
@@ -793,15 +912,15 @@ func _render_overlay() -> void:
 func _render_start_menu() -> void:
 	var start := Button.new()
 	start.set_meta("start_button", true)
-	start.position = Vector2((get_viewport_rect().size.x - 180.0) * 0.5, 332)
-	start.size = Vector2(180, 48)
+	start.size = Vector2(280, 76)
+	start.position = _center_in_safe_area(start.size)
 	start.text = "开始游戏"
-	start.add_theme_font_size_override("font_size", 22)
+	start.add_theme_font_size_override("font_size", _ui_font(22))
 	start.add_theme_color_override("font_color", Color("#443b32"))
 	start.add_theme_color_override("font_hover_color", Color("#443b32"))
 	start.add_theme_color_override("font_pressed_color", Color("#443b32"))
 	start.add_theme_color_override("font_focus_color", Color("#443b32"))
-	var start_style := _style(Color("#ffe08a"), card_border, 4, 12)
+	var start_style := _style(Color("#ffe08a"), card_border, 5, 16)
 	_apply_button_style_states(start, start_style)
 	start.z_index = 202
 	start.pressed.connect(_on_start_pressed)
@@ -835,7 +954,7 @@ func _configure_card_button_visual(btn: Button, card: Dictionary, is_selected: b
 	if not card["face_up"]:
 		fill = back_color
 		border = Color.WHITE
-	_apply_button_style_states(btn, _style(fill, border, 4, 10))
+	_apply_button_style_states(btn, _style(fill, border, 6, 18))
 	if card["type"] == "category" and card["face_up"] and display_text != "":
 		var lines := display_text.split("\n")
 		var progress := "0/" + str(categories.get(card["category"], []).size())
@@ -884,14 +1003,14 @@ func _add_dash(parent: Control, pos: Vector2, dash_size: Vector2, color: Color, 
 
 ## 给牌堆绘制“牌堆/剩余若干张”标签。
 func _add_deck_count_labels(parent: Control) -> void:
-	_add_generated_label(parent, "牌堆", Vector2(5, 26), Vector2(68, 24), 17, Color.WHITE)
-	_add_generated_label(parent, "剩余" + str(deck.size()) + "张", Vector2(4, 52), Vector2(70, 22), 13, Color.WHITE)
+	_add_generated_label(parent, "牌堆", Vector2(10, 52), Vector2(CARD_W - 20, 44), _ui_font(17), Color.WHITE)
+	_add_generated_label(parent, "剩余" + str(deck.size()) + "张", Vector2(8, 100), Vector2(CARD_W - 16, 36), _ui_font(13), Color.WHITE)
 
 
 ## 绘制类别牌名称和固定字号的进度数字。
 func _add_category_card_labels(parent: Control, category_name: String, progress: String, color: Color) -> void:
-	_add_generated_label(parent, category_name, Vector2(6, 20), Vector2(CARD_W - 12, 34), _font_size_for_card_text(category_name, "category"), color)
-	_add_generated_label(parent, progress, Vector2(6, 57), Vector2(CARD_W - 12, 24), 16, color)
+	_add_generated_label(parent, category_name, Vector2(10, 40), Vector2(CARD_W - 20, 62), _font_size_for_card_text(category_name, "category"), color)
+	_add_generated_label(parent, progress, Vector2(10, 110), Vector2(CARD_W - 20, 38), _ui_font(16), color)
 
 
 func _add_generated_label(parent: Control, text: String, pos: Vector2, label_size: Vector2, font_size: int, color: Color) -> Label:
@@ -1024,7 +1143,7 @@ func _spawn_draw_card_animation(card: Dictionary) -> void:
 	var fly_card := _make_card_button(back_card, false, false)
 	fly_card.disabled = true
 	fly_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	fly_card.position = Vector2(_column_x(3), DRAW_Y)
+	fly_card.position = Vector2(_column_x(3), _layout_y(DRAW_Y))
 	fly_card.size = Vector2(CARD_W, CARD_H)
 	fly_card.pivot_offset = fly_card.size * 0.5
 	fly_card.scale = Vector2(0.98, 0.98)
@@ -1193,7 +1312,7 @@ func _spawn_wash_animation() -> void:
 	wash_animation_nodes[wash_animation_nodes.size() - 1].z_index = 135
 	wash_flight = {
 		"elapsed": 0.0,
-		"target": Vector2(_column_x(3), DRAW_Y),
+		"target": Vector2(_column_x(3), _layout_y(DRAW_Y)),
 		"flipped": false,
 	}
 
@@ -1352,33 +1471,50 @@ func _add_card_strip_label(parent: Control, text: String) -> void:
 ## 根据文本长度计算牌面动态字号。
 func _font_size_for_card_text(text: String, card_type: String) -> int:
 	var longest_line := _longest_text_line_length(text)
+	var base_size := 17
 	if card_type == "category":
 		if longest_line >= 6:
-			return 12
+			base_size = 12
+			return _ui_font(base_size)
 		if longest_line >= 5:
-			return 13
+			base_size = 13
+			return _ui_font(base_size)
 		if longest_line >= 4:
-			return 15
-		return 16
+			base_size = 15
+			return _ui_font(base_size)
+		base_size = 16
+		return _ui_font(base_size)
 	if longest_line >= 6:
-		return 12
+		base_size = 12
+		return _ui_font(base_size)
 	if longest_line >= 5:
-		return 13
+		base_size = 13
+		return _ui_font(base_size)
 	if longest_line >= 4:
-		return 15
-	return 17
+		base_size = 15
+		return _ui_font(base_size)
+	return _ui_font(base_size)
 
 
 ## 根据文本长度计算露出文字条字号。
 func _font_size_for_strip_text(text: String) -> int:
 	var longest_line := _longest_text_line_length(text)
+	var base_size := 13
 	if longest_line >= 6:
-		return 9
+		base_size = 9
+		return _ui_font(base_size)
 	if longest_line >= 5:
-		return 10
+		base_size = 10
+		return _ui_font(base_size)
 	if longest_line >= 4:
-		return 11
-	return 13
+		base_size = 11
+		return _ui_font(base_size)
+	return _ui_font(base_size)
+
+
+## 将旧 375 宽设计稿里的字号换算到 720 宽基准。
+func _ui_font(base_size: int) -> int:
+	return int(round(float(base_size) * UI_SCALE))
 
 
 func _longest_text_line_length(text: String) -> int:
@@ -1448,21 +1584,64 @@ func _style(fill: Color, border: Color, border_width: int, radius: int) -> Style
 	style.border_color = border
 	style.set_border_width_all(border_width)
 	style.set_corner_radius_all(radius)
-	style.content_margin_left = 4
-	style.content_margin_right = 4
-	style.content_margin_top = 4
-	style.content_margin_bottom = 4
+	style.content_margin_left = 8
+	style.content_margin_right = 8
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
 	return style
 
 
 ## 根据当前视口宽度计算第几列的水平坐标。
 func _column_x(col_idx: int) -> float:
 	var total_width := BOARD_COLUMN_COUNT * CARD_W + (BOARD_COLUMN_COUNT - 1) * COL_GAP
-	var viewport_width := 375.0
-	if is_inside_tree():
-		viewport_width = get_viewport_rect().size.x
-	var start_x := (viewport_width - total_width) * 0.5
+	var start_x := _play_area_origin().x + (GAME_W - total_width) * 0.5
 	return start_x + col_idx * (CARD_W + COL_GAP)
+
+
+## 将设计稿里的纵坐标映射到安全区内的游戏区域。
+func _layout_y(local_y: float) -> float:
+	return _play_area_origin().y + local_y
+
+
+## 返回安全区内居中的 720x1280 设计区域左上角。
+func _play_area_origin() -> Vector2:
+	return _play_area_origin_for_safe_rect(_safe_viewport_rect())
+
+
+## 纯计算版本，便于测试横屏和刘海屏偏移。
+func _play_area_origin_for_safe_rect(safe_rect: Rect2) -> Vector2:
+	var x: float = safe_rect.position.x + max(0.0, (safe_rect.size.x - GAME_W) * 0.5)
+	return Vector2(x, safe_rect.position.y)
+
+
+## 将移动端 safe area 换算成当前拉伸后的逻辑坐标。
+func _safe_viewport_rect() -> Rect2:
+	var viewport_size := Vector2(GAME_W, GAME_H)
+	if is_inside_tree():
+		viewport_size = get_viewport_rect().size
+	var full_rect := Rect2(Vector2.ZERO, viewport_size)
+	if not is_inside_tree():
+		return full_rect
+
+	var raw_safe := DisplayServer.get_display_safe_area()
+	var window_size_i := DisplayServer.window_get_size()
+	if raw_safe.size.x <= 0 or raw_safe.size.y <= 0 or window_size_i.x <= 0 or window_size_i.y <= 0:
+		return full_rect
+
+	var window_size := Vector2(window_size_i)
+	# 桌面端可能返回整块显示器安全区；和窗口尺寸明显不匹配时忽略，避免编辑器里产生错误偏移。
+	if raw_safe.size.x > window_size.x * 1.1 or raw_safe.size.y > window_size.y * 1.1:
+		return full_rect
+
+	var scale := Vector2(viewport_size.x / window_size.x, viewport_size.y / window_size.y)
+	var safe_rect := Rect2(Vector2(raw_safe.position) * scale, Vector2(raw_safe.size) * scale)
+	return full_rect.intersection(safe_rect)
+
+
+## 在 safe area 中居中放置弹窗和开始按钮。
+func _center_in_safe_area(size: Vector2) -> Vector2:
+	var safe_rect := _safe_viewport_rect()
+	return safe_rect.position + (safe_rect.size - size) * 0.5
 
 
 ## 返回 1 区某张牌的显示位置。
@@ -1475,12 +1654,12 @@ func _draw_card_position_for_size(card_index: int, stack_size: int) -> Vector2:
 	var visible_count: int = min(3, stack_size)
 	var first_visible_index: int = stack_size - visible_count
 	var visible_offset: int = card_index - first_visible_index
-	return Vector2(_column_x(2) - visible_offset * 18.0, DRAW_Y)
+	return Vector2(_column_x(2) - visible_offset * DRAW_STACK_SPREAD, _layout_y(DRAW_Y))
 
 
 ## 返回 3 区槽位的落点判定矩形。
 func _category_slot_rect(slot_idx: int) -> Rect2:
-	return Rect2(Vector2(_column_x(slot_idx), CATEGORY_Y), Vector2(CARD_W, CARD_H))
+	return Rect2(Vector2(_column_x(slot_idx), _layout_y(CATEGORY_Y)), Vector2(CARD_W, CARD_H))
 
 
 ## 将 4 区列的落点判定向下延伸，提升手机拖拽容错。
@@ -1488,12 +1667,12 @@ func _board_column_rect(col_idx: int) -> Rect2:
 	var column_height := CARD_H
 	if col_idx < columns.size() and not columns[col_idx].is_empty():
 		column_height = CARD_H + (columns[col_idx].size() - 1) * STACK_STEP
-	return Rect2(Vector2(_column_x(col_idx), BOARD_Y), Vector2(CARD_W, column_height + BOARD_DROP_EXTRA_BOTTOM))
+	return Rect2(Vector2(_column_x(col_idx), _layout_y(BOARD_Y)), Vector2(CARD_W, column_height + BOARD_DROP_EXTRA_BOTTOM))
 
 
 ## 返回 2 区牌堆区域矩形。
 func _deck_rect() -> Rect2:
-	return Rect2(Vector2(_column_x(3), DRAW_Y), Vector2(78, 104))
+	return Rect2(Vector2(_column_x(3), _layout_y(DRAW_Y)), Vector2(CARD_W, CARD_H))
 
 
 func _on_deck_pressed() -> void:
@@ -1648,7 +1827,7 @@ func _drop_selected_at(global_pos: Vector2) -> void:
 			if _category_slot_occupied(i):
 				var category: String = active_order[i]
 				if _move_selected_to_active_category(category):
-					selected["absorb_target_position"] = Vector2(_column_x(i), CATEGORY_Y)
+					selected["absorb_target_position"] = Vector2(_column_x(i), _layout_y(CATEGORY_Y))
 					selected["absorb_target_slot"] = i
 					_after_successful_move()
 				else:
@@ -2029,7 +2208,7 @@ func _selection_for_board(col_idx: int, card_idx: int) -> Dictionary:
 		"col": col_idx,
 		"start": group_start,
 		"cards": column.slice(group_start),
-		"return_position": Vector2(_column_x(col_idx), BOARD_Y + group_start * STACK_STEP),
+		"return_position": Vector2(_column_x(col_idx), _layout_y(BOARD_Y) + group_start * STACK_STEP),
 		"drag_offset_y": float(card_idx - group_start) * STACK_STEP,
 	}
 
@@ -2052,7 +2231,7 @@ func _move_selected_to_column(col_idx: int) -> bool:
 	for card in cards:
 		card["face_up"] = true
 		target.append(card)
-		previous_card_positions[card["id"]] = Vector2(_column_x(col_idx), BOARD_Y + (target.size() - 1) * STACK_STEP)
+		previous_card_positions[card["id"]] = Vector2(_column_x(col_idx), _layout_y(BOARD_Y) + (target.size() - 1) * STACK_STEP)
 		suppress_next_move_animations[card["id"]] = true
 	status_text = "移动到 4 区"
 	return true

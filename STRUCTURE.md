@@ -72,6 +72,7 @@
 - **Responsibilities:**
   - Creates looping BGM and pooled SFX players.
   - Applies base-plus-trim volume balancing.
+  - Respects the music/SFX toggles persisted by `main.gd`.
   - Mirrors public audio fields back to `main.gd` for smoke tests and diagnostics.
 
 ## Input

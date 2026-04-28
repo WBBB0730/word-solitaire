@@ -27,6 +27,11 @@ const TOP_BUTTON_W := 96.0
 const TOP_BUTTON_H := 52.0
 const TOP_BUTTON_GAP := 14.0
 const STEPS_LABEL_Y := 88.0
+const SETTINGS_PANEL_W := 480.0
+const SETTINGS_PANEL_H := 560.0
+const SETTINGS_ACTION_W := 300.0
+const SETTINGS_ACTION_H := 66.0
+const SETTINGS_ACTION_GAP := 18.0
 const MAX_CATEGORY_SLOTS := 4
 const STARTING_STEPS := 120
 const BOARD_COLUMN_COUNT := 4
@@ -58,6 +63,8 @@ const ROUND_TRANSITION_SEAM_H := 4.0
 const MUSIC_PATH := "res://assets/audio/background_music.mp3"
 const CARD_FLIP_SFX_PATH := "res://assets/audio/card_flip.wav"
 const BUTTON_CLICK_SFX_PATH := "res://assets/audio/button_click.mp3"
+const USER_SETTINGS_PATH := "user://settings.cfg"
+const USER_SETTINGS_SECTION := "audio"
 const SFX_PLAYER_COUNT := 4
 const BUTTON_SFX_PLAYER_COUNT := 3
 const MUSIC_BASE_VOLUME_DB := -8.0
@@ -73,6 +80,8 @@ const BUTTON_CLICK_SFX_VOLUME_DB := SFX_BASE_VOLUME_DB + BUTTON_CLICK_SFX_TRIM_D
 var category_pool := CategoryLibraryScript.get_category_pool()
 ## 手写类别冲突组。同组类别不会被抽进同一局。
 var category_conflict_groups := CategoryLibraryScript.get_category_conflict_groups()
+## 用户配置文件路径。测试可替换为临时路径。
+var user_settings_path := USER_SETTINGS_PATH
 
 ## 当前局选中的类别集合。
 var categories := {}
@@ -92,6 +101,12 @@ var active_order: Array[String] = []
 var selected := {}
 ## 独立开始菜单是否正在显示。
 var menu_active := true
+## 游戏内设置弹窗是否打开。
+var settings_menu_open := false
+## 背景音乐是否启用。
+var music_enabled := true
+## 所有短音效是否启用。
+var sfx_enabled := true
 ## 剩余步数。抽牌和洗牌都消耗一步。
 var steps_left := STARTING_STEPS
 ## 递增卡牌编号，用于动画追踪和求解器状态键。
@@ -164,6 +179,7 @@ var category_empty_slot_color := Color("#f6d86a", 0.42)
 func _ready() -> void:
 	_configure_root_layout()
 	_bind_viewport_resize_signal()
+	_load_user_settings()
 	_init_audio()
 	randomize()
 	_init_level()
@@ -181,6 +197,8 @@ func _notification(what: int) -> void:
 ## 处理全局拖拽过程中的移动和松手事件。
 func _input(event: InputEvent) -> void:
 	if round_transition_active:
+		return
+	if settings_menu_open:
 		return
 	if menu_active:
 		return
@@ -203,6 +221,7 @@ func _init_audio() -> void:
 	if audio_manager == null:
 		audio_manager = GameAudioScript.new(self)
 	audio_manager.init_audio()
+	_sync_audio_enabled_state()
 
 
 ## 兼容旧测试入口：设置音频流循环。
@@ -212,7 +231,7 @@ func _set_audio_stream_loop(stream: AudioStream, enabled: bool) -> void:
 
 ## 播放背景音乐，通常由延迟回调触发。
 func _play_background_music() -> void:
-	if audio_manager != null:
+	if music_enabled and audio_manager != null:
 		audio_manager.play_background_music()
 
 
@@ -306,13 +325,13 @@ func _resize_round_transition_overlay() -> void:
 
 ## 播放翻牌/洗牌音效。
 func _play_card_flip_sfx() -> void:
-	if audio_manager != null:
+	if sfx_enabled and audio_manager != null:
 		audio_manager.play_card_flip_sfx()
 
 
 ## 播放普通按钮点击音效。
 func _play_button_click_sfx() -> void:
-	if audio_manager != null:
+	if sfx_enabled and audio_manager != null:
 		audio_manager.play_button_click_sfx()
 
 
@@ -665,6 +684,8 @@ func _render() -> void:
 
 	if game_over:
 		_render_overlay()
+	if settings_menu_open:
+		_render_settings_menu()
 
 	previous_card_positions = next_card_positions
 
@@ -730,17 +751,12 @@ func _render_deck_area() -> void:
 	add_child(btn)
 
 
-## 渲染重开、首页按钮和剩余步数。
+## 渲染左上角菜单入口和剩余步数。
 func _render_top_controls() -> void:
 	var origin := _play_area_origin()
-	var restart := _make_top_button("重开", origin + Vector2(TOP_CONTROL_X, TOP_CONTROL_Y), "restart_button")
-	restart.pressed.connect(_on_restart_pressed)
-	add_child(restart)
-
-	var home_x := TOP_CONTROL_X + TOP_BUTTON_W + TOP_BUTTON_GAP
-	var home := _make_top_button("首页", origin + Vector2(home_x, TOP_CONTROL_Y), "home_button")
-	home.pressed.connect(_on_home_pressed)
-	add_child(home)
+	var menu := _make_top_button("菜单", origin + Vector2(TOP_CONTROL_X, TOP_CONTROL_Y), "settings_button")
+	menu.pressed.connect(_on_settings_pressed)
+	add_child(menu)
 
 	_add_label("剩余步数：" + str(steps_left), origin + Vector2(TOP_CONTROL_X, STEPS_LABEL_Y), Vector2(260, 40), _ui_font(13), Color(1, 1, 1, 0.82), false)
 
@@ -758,6 +774,88 @@ func _make_top_button(text: String, pos: Vector2, meta_name: String) -> Button:
 	btn.add_theme_color_override("font_pressed_color", Color("#443b32"))
 	btn.add_theme_color_override("font_focus_color", Color("#443b32"))
 	var style := _style(Color("#ffe08a"), card_border, 5, 12)
+	_apply_button_style_states(btn, style)
+	_attach_button_press_feedback(btn)
+	return btn
+
+
+## 渲染游戏内设置弹窗，统一放置音频和导航动作。
+func _render_settings_menu() -> void:
+	var shade := ColorRect.new()
+	shade.set_meta("settings_menu_overlay", true)
+	shade.color = Color(0, 0, 0, 0.28)
+	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	shade.z_index = 210
+	add_child(shade)
+
+	var panel := Panel.new()
+	panel.set_meta("settings_menu_panel", true)
+	panel.size = Vector2(SETTINGS_PANEL_W, SETTINGS_PANEL_H)
+	panel.position = _center_in_safe_area(panel.size)
+	panel.z_index = 211
+	panel.add_theme_stylebox_override("panel", _style(Color("#fff7dc"), card_border, 6, 22))
+	add_child(panel)
+
+	var title := _add_label("菜单", panel.position + Vector2(0, 34), Vector2(panel.size.x, 54), _ui_font(24), Color("#352f2b"), true)
+	title.z_index = 212
+	var first_y := panel.position.y + 112.0
+	var x := panel.position.x + (panel.size.x - SETTINGS_ACTION_W) * 0.5
+	var music := _make_settings_button(
+		"音乐：" + ("开" if music_enabled else "关"),
+		Vector2(x, first_y),
+		"music_toggle_button"
+	)
+	music.pressed.connect(_on_music_toggle_pressed)
+	add_child(music)
+
+	var sfx := _make_settings_button(
+		"音效：" + ("开" if sfx_enabled else "关"),
+		Vector2(x, first_y + (SETTINGS_ACTION_H + SETTINGS_ACTION_GAP)),
+		"sfx_toggle_button"
+	)
+	sfx.pressed.connect(_on_sfx_toggle_pressed)
+	add_child(sfx)
+
+	var restart := _make_settings_button(
+		"重新开始",
+		Vector2(x, first_y + 2.0 * (SETTINGS_ACTION_H + SETTINGS_ACTION_GAP)),
+		"restart_button"
+	)
+	restart.pressed.connect(_on_restart_pressed)
+	add_child(restart)
+
+	var home := _make_settings_button(
+		"回到首页",
+		Vector2(x, first_y + 3.0 * (SETTINGS_ACTION_H + SETTINGS_ACTION_GAP)),
+		"home_button"
+	)
+	home.pressed.connect(_on_home_pressed)
+	add_child(home)
+
+	var close := _make_settings_button(
+		"继续游戏",
+		Vector2(x, first_y + 4.0 * (SETTINGS_ACTION_H + SETTINGS_ACTION_GAP)),
+		"settings_close_button"
+	)
+	close.pressed.connect(_on_settings_close_pressed)
+	add_child(close)
+
+
+## 创建设置弹窗里的标准按钮。
+func _make_settings_button(text: String, pos: Vector2, meta_name: String) -> Button:
+	var btn := Button.new()
+	btn.set_meta(meta_name, true)
+	btn.position = pos
+	btn.size = Vector2(SETTINGS_ACTION_W, SETTINGS_ACTION_H)
+	btn.text = text
+	btn.z_index = 212
+	btn.add_theme_font_size_override("font_size", _ui_font(16))
+	btn.add_theme_color_override("font_color", Color("#443b32"))
+	btn.add_theme_color_override("font_hover_color", Color("#443b32"))
+	btn.add_theme_color_override("font_pressed_color", Color("#443b32"))
+	btn.add_theme_color_override("font_focus_color", Color("#443b32"))
+	var style := _style(Color("#ffe08a"), card_border, 5, 14)
 	_apply_button_style_states(btn, style)
 	_attach_button_press_feedback(btn)
 	return btn
@@ -811,15 +909,16 @@ func _render_board_area(next_card_positions: Dictionary) -> void:
 			empty.set_meta("board_empty_slot", true)
 			empty.position = Vector2(x, board_y)
 			empty.size = Vector2(CARD_W, CARD_H)
-			empty.text = "+"
+			empty.text = ""
 			empty.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			empty.add_theme_font_size_override("font_size", _ui_font(30))
 			empty.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
 			empty.add_theme_color_override("font_hover_color", Color(1, 1, 1, 0.45))
 			empty.add_theme_color_override("font_pressed_color", Color(1, 1, 1, 0.45))
 			empty.add_theme_color_override("font_focus_color", Color(1, 1, 1, 0.45))
-			var empty_style := _style(slot_color, Color(1, 1, 1, 0.35), 4, 18)
+			var empty_style := _style(slot_color, Color(0, 0, 0, 0), 0, 18)
 			_apply_button_style_states(empty, empty_style)
+			_add_dashed_outline(empty, empty.size, Color(1, 1, 1, 0.42), 4.0, 14.0, 10.0, "board_slot_dash")
 			add_child(empty)
 			continue
 
@@ -1044,7 +1143,9 @@ func _attach_button_press_feedback(btn: Button) -> void:
 func _on_button_feedback_down(btn: Button) -> void:
 	if not is_instance_valid(btn) or btn.disabled:
 		return
-	_play_button_click_sfx()
+	# 音效开关要等状态切换后再决定是否播放，避免“关”的那一下还响。
+	if not btn.has_meta("sfx_toggle_button"):
+		_play_button_click_sfx()
 	btn.pivot_offset = btn.size * 0.5
 	var tween := create_tween()
 	tween.set_trans(Tween.TRANS_CUBIC)
@@ -2123,6 +2224,7 @@ func _kill_round_transition_tween() -> void:
 
 ## 重新开始按钮回调。
 func _on_restart_pressed() -> void:
+	settings_menu_open = false
 	_start_new_round("点击牌堆开始")
 
 
@@ -2130,6 +2232,7 @@ func _on_restart_pressed() -> void:
 func _on_home_pressed() -> void:
 	_clear_transient_interaction_state()
 	menu_active = true
+	settings_menu_open = false
 	game_over = false
 	selected.clear()
 	_render()
@@ -2137,7 +2240,76 @@ func _on_home_pressed() -> void:
 
 ## 开始游戏按钮回调。
 func _on_start_pressed() -> void:
+	settings_menu_open = false
 	_start_new_round("开始游戏")
+
+
+## 打开游戏内设置菜单。
+func _on_settings_pressed() -> void:
+	if game_over or menu_active or round_transition_active:
+		return
+	settings_menu_open = true
+	_render()
+
+
+## 关闭游戏内设置菜单。
+func _on_settings_close_pressed() -> void:
+	settings_menu_open = false
+	_render()
+
+
+## 切换背景音乐开关。
+func _on_music_toggle_pressed() -> void:
+	music_enabled = not music_enabled
+	_sync_audio_enabled_state()
+	_save_user_settings()
+	_render()
+
+
+## 切换所有短音效开关。
+func _on_sfx_toggle_pressed() -> void:
+	sfx_enabled = not sfx_enabled
+	_sync_audio_enabled_state()
+	_save_user_settings()
+	if sfx_enabled:
+		_play_button_click_sfx()
+	_render()
+
+
+## 从本地用户配置读取上次保存的音频开关。
+func _load_user_settings() -> void:
+	var config := ConfigFile.new()
+	if config.load(user_settings_path) != OK:
+		return
+	music_enabled = bool(config.get_value(USER_SETTINGS_SECTION, "music_enabled", music_enabled))
+	sfx_enabled = bool(config.get_value(USER_SETTINGS_SECTION, "sfx_enabled", sfx_enabled))
+
+
+## 保存当前音频开关，下次启动自动恢复。
+func _save_user_settings() -> void:
+	var config := ConfigFile.new()
+	config.set_value(USER_SETTINGS_SECTION, "music_enabled", music_enabled)
+	config.set_value(USER_SETTINGS_SECTION, "sfx_enabled", sfx_enabled)
+	config.save(user_settings_path)
+
+
+## 根据当前开关状态同步实际音频播放器。
+func _sync_audio_enabled_state() -> void:
+	if is_instance_valid(music_player):
+		if music_enabled:
+			if music_player.is_inside_tree():
+				if not music_player.playing:
+					music_player.play()
+				music_player.stream_paused = false
+		else:
+			if music_player.is_inside_tree():
+				music_player.stream_paused = true
+	for player in sfx_players:
+		if is_instance_valid(player) and not sfx_enabled:
+			player.stop()
+	for player in button_sfx_players:
+		if is_instance_valid(player) and not sfx_enabled:
+			player.stop()
 
 
 ## 清理动画、拖拽预览和其他临时交互状态。

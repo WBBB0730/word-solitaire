@@ -56,13 +56,11 @@ func _process(_delta: float) -> bool:
 
 
 func _top_controls_match_current_origin() -> bool:
-	var restart := _find_button_with_meta(scene, "restart_button")
-	var home := _find_button_with_meta(scene, "home_button")
-	if restart == null or home == null:
+	var settings := _find_button_with_meta(scene, "settings_button")
+	if settings == null:
 		return false
 	var origin: Vector2 = scene._play_area_origin()
-	var home_x: float = scene.TOP_CONTROL_X + scene.TOP_BUTTON_W + scene.TOP_BUTTON_GAP
-	return restart.position == origin + Vector2(scene.TOP_CONTROL_X, scene.TOP_CONTROL_Y) and home.position == origin + Vector2(home_x, scene.TOP_CONTROL_Y)
+	return settings.position == origin + Vector2(scene.TOP_CONTROL_X, scene.TOP_CONTROL_Y)
 
 
 func _find_button_with_meta(node: Node, meta_name: String) -> Button:

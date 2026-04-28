@@ -61,7 +61,7 @@
 - 牌堆/洗牌动画：`deck_*_smoke.gd`、`draw_*_smoke.gd`、`wash_*_smoke.gd`、`repeated_draw_smoke.gd`
 - 拖拽/移动：`drag_*_smoke.gd`、`drop_no_replay_smoke.gd`、`board_drop_extended_hitbox_smoke.gd`
 - 3 区吸收/完成：`category_*_smoke.gd`、`complete_group_category_pulse_smoke.gd`、`board_absorb_reveal_sync_smoke.gd`
-- UI/音频/菜单：`audio_smoke.gd`、`button_click_sfx_scope_smoke.gd`、`start_menu_smoke.gd`、`top_controls_smoke.gd`、`no_hover_smoke.gd`
+- UI/音频/菜单：`audio_smoke.gd`、`button_click_sfx_scope_smoke.gd`、`board_empty_slot_smoke.gd`、`start_menu_smoke.gd`、`settings_menu_smoke.gd`、`top_controls_smoke.gd`、`no_hover_smoke.gd`
 
 ## 生成和本地文件
 

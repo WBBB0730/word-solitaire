@@ -26,14 +26,28 @@ func _process(_delta: float) -> bool:
 
 	start_button.pressed.emit()
 	_finish_round_transition(scene)
-	var restart_button := _find_button_with_meta(scene, "restart_button")
-	var home_button := _find_button_with_meta(scene, "home_button")
-	if restart_button == null or home_button == null:
-		push_error("Button click sfx scope failed: top buttons not found")
+	var settings_button := _find_button_with_meta(scene, "settings_button")
+	if settings_button == null:
+		push_error("Button click sfx scope failed: settings button not found")
 		quit(1)
 		return false
-	if not _has_button_down_connection(restart_button) or not _has_button_down_connection(home_button):
-		push_error("Button click sfx scope failed: top buttons have no click feedback connection")
+	if not _has_button_down_connection(settings_button):
+		push_error("Button click sfx scope failed: settings button has no click feedback connection")
+		quit(1)
+		return false
+
+	settings_button.pressed.emit()
+	var restart_button := _find_button_with_meta(scene, "restart_button")
+	var home_button := _find_button_with_meta(scene, "home_button")
+	var music_button := _find_button_with_meta(scene, "music_toggle_button")
+	var sfx_button := _find_button_with_meta(scene, "sfx_toggle_button")
+	var close_button := _find_button_with_meta(scene, "settings_close_button")
+	if restart_button == null or home_button == null or music_button == null or sfx_button == null or close_button == null:
+		push_error("Button click sfx scope failed: settings menu buttons not found")
+		quit(1)
+		return false
+	if not _has_button_down_connection(restart_button) or not _has_button_down_connection(home_button) or not _has_button_down_connection(music_button) or not _has_button_down_connection(sfx_button) or not _has_button_down_connection(close_button):
+		push_error("Button click sfx scope failed: settings menu buttons have no click feedback connection")
 		quit(1)
 		return false
 

@@ -38,17 +38,32 @@ func _process(_delta: float) -> bool:
 		quit(1)
 		return false
 
-	var restart := _find_button_with_meta(scene, "restart_button")
-	if restart == null:
-		push_error("No hover smoke failed: restart button not found")
+	var settings := _find_button_with_meta(scene, "settings_button")
+	if settings == null:
+		push_error("No hover smoke failed: settings button not found")
 		quit(1)
 		return false
-	if restart.get_theme_stylebox("hover") != restart.get_theme_stylebox("normal"):
-		push_error("No hover smoke failed: restart hover style differs from normal")
+	if settings.get_theme_stylebox("hover") != settings.get_theme_stylebox("normal"):
+		push_error("No hover smoke failed: settings hover style differs from normal")
 		quit(1)
 		return false
-	if not (restart.get_theme_stylebox("focus") is StyleBoxEmpty):
-		push_error("No hover smoke failed: restart focus style is visible")
+	if not (settings.get_theme_stylebox("focus") is StyleBoxEmpty):
+		push_error("No hover smoke failed: settings focus style is visible")
+		quit(1)
+		return false
+
+	settings.pressed.emit()
+	var music := _find_button_with_meta(scene, "music_toggle_button")
+	if music == null:
+		push_error("No hover smoke failed: music toggle not found")
+		quit(1)
+		return false
+	if music.get_theme_stylebox("hover") != music.get_theme_stylebox("normal"):
+		push_error("No hover smoke failed: music toggle hover style differs from normal")
+		quit(1)
+		return false
+	if not (music.get_theme_stylebox("focus") is StyleBoxEmpty):
+		push_error("No hover smoke failed: music toggle focus style is visible")
 		quit(1)
 		return false
 

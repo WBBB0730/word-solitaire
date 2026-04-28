@@ -23,18 +23,27 @@ func _process(_delta: float) -> bool:
 	start.pressed.emit()
 	_finish_round_transition(scene)
 
-	var restart := _find_button_with_meta(scene, "restart_button")
-	var home := _find_button_with_meta(scene, "home_button")
-	if restart == null:
-		push_error("Top controls smoke failed: restart button not found after start")
+	var settings := _find_button_with_meta(scene, "settings_button")
+	if settings == null:
+		push_error("Top controls smoke failed: settings button not found after start")
 		quit(1)
 		return false
-	if home == null:
-		push_error("Top controls smoke failed: home button not found after start")
+	if _find_button_with_meta(scene, "restart_button") != null or _find_button_with_meta(scene, "home_button") != null:
+		push_error("Top controls smoke failed: restart/home should live inside settings menu")
 		quit(1)
 		return false
 	if _find_label(scene, "第1关") != null:
 		push_error("Top controls smoke failed: level label is still visible")
+		quit(1)
+		return false
+
+	settings.pressed.emit()
+	var restart := _find_button_with_meta(scene, "restart_button")
+	var home := _find_button_with_meta(scene, "home_button")
+	var music := _find_button_with_meta(scene, "music_toggle_button")
+	var sfx := _find_button_with_meta(scene, "sfx_toggle_button")
+	if restart == null or home == null or music == null or sfx == null:
+		push_error("Top controls smoke failed: settings menu actions are incomplete")
 		quit(1)
 		return false
 

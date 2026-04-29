@@ -24,22 +24,122 @@
 				display: block;
 				width: 100vw;
 				height: 100vh;
+				visibility: hidden;
+				opacity: 0;
+				transform: scale(0.985);
 				background: transparent;
+			}
+
+			#canvas.ready {
+				visibility: visible;
+				animation: canvas-pop-in 320ms cubic-bezier(0.2, 1.35, 0.34, 1) forwards;
+			}
+
+			#loader {
+				position: fixed;
+				left: 50%;
+				top: 50%;
+				width: min(280px, calc(100vw - 80px));
+				transform: translate(-50%, -50%);
+			}
+
+			#loader.hidden {
+				animation: loader-pop-out 180ms cubic-bezier(0.42, 0, 0.58, 1) forwards;
+				pointer-events: none;
+			}
+
+			#progress-track {
+				height: 10px;
+				overflow: hidden;
+				border: 3px solid #151515;
+				border-radius: 999px;
+				background: rgba(255, 255, 255, 0.35);
+			}
+
+			#progress-bar {
+				width: 0%;
+				height: 100%;
+				border-radius: inherit;
+				background: #ffe28a;
+				transition: width 120ms ease;
+			}
+
+			@keyframes loader-pop-out {
+				0% {
+					opacity: 1;
+					transform: translate(-50%, -50%) scale(1);
+				}
+				45% {
+					opacity: 1;
+					transform: translate(-50%, -50%) scale(1.04);
+				}
+				100% {
+					opacity: 0;
+					transform: translate(-50%, -50%) scale(0.88);
+				}
+			}
+
+			@keyframes canvas-pop-in {
+				0% {
+					opacity: 0;
+					transform: scale(0.985);
+				}
+				70% {
+					opacity: 1;
+					transform: scale(1.012);
+				}
+				100% {
+					opacity: 1;
+					transform: scale(1);
+				}
 			}
 		</style>
 	</head>
 	<body>
 		<canvas id="canvas"></canvas>
+		<div id="loader" aria-label="Loading">
+			<div id="progress-track">
+				<div id="progress-bar"></div>
+			</div>
+		</div>
 		<script src="$GODOT_URL"></script>
 		<script>
 			const canvas = document.getElementById("canvas");
+			const loader = document.getElementById("loader");
+			const progressBar = document.getElementById("progress-bar");
 			const config = $GODOT_CONFIG;
+			const expectedBytes = Object.values(config.fileSizes || {}).reduce((sum, size) => sum + size, 0);
+			let latestProgress = 0.04;
+
+			const setProgress = (ratio) => {
+				latestProgress = Math.max(latestProgress, Math.min(ratio, 0.96));
+				progressBar.style.width = `${Math.max(4, latestProgress * 100)}%`;
+			};
+
 			config.canvas = canvas;
+			config.onProgress = (current, total) => {
+				const effectiveTotal = total > 0 ? total : expectedBytes;
+				if (effectiveTotal > 0) {
+					setProgress(current / effectiveTotal);
+				}
+			};
 
 			const engine = new Engine(config);
-			engine.startGame().catch((error) => {
-				console.error(error);
-			});
+			engine.startGame()
+				.then(() => {
+					latestProgress = 1;
+					progressBar.style.width = "100%";
+					setTimeout(() => {
+						loader.classList.add("hidden");
+					}, 120);
+					setTimeout(() => {
+						loader.style.display = "none";
+						canvas.classList.add("ready");
+					}, 360);
+				})
+				.catch((error) => {
+					console.error(error);
+				});
 		</script>
 	</body>
 </html>

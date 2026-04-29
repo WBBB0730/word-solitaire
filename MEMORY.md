@@ -4,6 +4,7 @@
 - Project/app name is `Word Solitaire`; Android package id is `com.wbbb.wordsolitaire`, and the debug APK export path is `builds/debug/android/word-solitaire.apk`.
 - Web exports use bundled Source Han Sans SC Medium (`assets/fonts/SourceHanSansSC-Medium.otf`) as the project UI font; Godot Web cannot rely on system CJK font fallback, or Chinese labels render as missing-glyph boxes.
 - Web exports use `web/shell.html` as a custom HTML shell so the browser loading page follows the Godot boot splash color instead of showing the default Web export loader.
+- GitHub Actions Vercel deploy reads `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` from repository variables (`vars.*`), while `VERCEL_TOKEN` remains a secret. CI writes `builds/web/.vercel/project.json` before deployment so `vercel deploy --cwd builds/web` cannot reuse an old linked project.
 - Codex project-level MCP server `godot` is configured in `.codex/config.toml` and visible in `codex mcp list`.
 - Current prototype intentionally uses GDScript and generated UI controls instead of C# scene builders because the existing project is a small non-.NET Godot project.
 - First playable version uses click-to-select/click-to-place. Dragging can be added later without changing the rules model.

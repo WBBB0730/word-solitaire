@@ -19,6 +19,9 @@
 ├── icon.svg                          # 项目图标
 ├── icon.svg.import                   # Godot 图标导入配置
 ├── assets/
+│   ├── fonts/
+│   │   ├── SourceHanSansSC-Medium.otf # Web/桌面/移动端统一中文 UI 字体
+│   │   └── SourceHanSans-OFL-1.1.txt # 思源黑体字体授权文件
 │   └── audio/
 │       ├── background_music.mp3      # 全局背景音乐
 │       ├── background_music.mp3.import

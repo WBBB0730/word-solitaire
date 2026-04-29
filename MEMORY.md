@@ -2,6 +2,7 @@
 
 - Godot version detected: `4.6.2.stable.official.71f334935`.
 - Project/app name is `Word Solitaire`; Android package id is `com.wbbb.wordsolitaire`, and the debug APK export path is `builds/debug/android/word-solitaire.apk`.
+- Web exports use bundled Source Han Sans SC Medium (`assets/fonts/SourceHanSansSC-Medium.otf`) as the project UI font; Godot Web cannot rely on system CJK font fallback, or Chinese labels render as missing-glyph boxes.
 - Codex project-level MCP server `godot` is configured in `.codex/config.toml` and visible in `codex mcp list`.
 - Current prototype intentionally uses GDScript and generated UI controls instead of C# scene builders because the existing project is a small non-.NET Godot project.
 - First playable version uses click-to-select/click-to-place. Dragging can be added later without changing the rules model.

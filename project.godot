@@ -28,7 +28,7 @@ window/handheld/orientation=1
 
 [gui]
 
-theme/custom_font="uid://8obxrcsvfj0r"
+theme/custom_font="res://assets/fonts/SourceHanSansSC-Medium.otf"
 
 [physics]
 

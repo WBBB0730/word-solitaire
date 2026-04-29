@@ -8,6 +8,8 @@ const CategorySelectorScript := preload("res://scripts/category_selector.gd")
 const CategoryLibraryScript := preload("res://scripts/category_library.gd")
 const DealSolverScript := preload("res://scripts/deal_solver.gd")
 const GameAudioScript := preload("res://scripts/game_audio.gd")
+const TutorialControllerScript := preload("res://scripts/tutorial_controller.gd")
+const TutorialOverlayScript := preload("res://scripts/tutorial_overlay.gd")
 
 const GAME_W := 720.0
 const GAME_H := 1280.0
@@ -143,6 +145,14 @@ var round_transition_tween: Tween
 var pending_round_message := ""
 ## 音频辅助对象。下面的公开音频字段会同步它，方便测试和调试。
 var audio_manager: RefCounted
+## 新手教学控制器。固定教学关、步骤白名单和完成状态保存在独立脚本中。
+var tutorial_controller: RefCounted
+## 新手教学视觉层。负责手势和高亮，不参与规则判断。
+var tutorial_overlay: RefCounted
+## 是否已经完成过教学。首次为 false 时，开始游戏会进入教学关。
+var tutorial_completed := false
+## 成功移动后延迟到动画完成时再通知教程推进。
+var pending_tutorial_action := {}
 var music_player: AudioStreamPlayer
 var card_flip_sfx_stream: AudioStream
 var button_click_sfx_stream: AudioStream
@@ -181,6 +191,7 @@ func _ready() -> void:
 	_bind_viewport_resize_signal()
 	_load_user_settings()
 	_init_audio()
+	_init_tutorial()
 	randomize()
 	_init_level()
 	_render()
@@ -222,6 +233,19 @@ func _init_audio() -> void:
 		audio_manager = GameAudioScript.new(self)
 	audio_manager.init_audio()
 	_sync_audio_enabled_state()
+
+
+## 初始化新手教学控制器。
+func _init_tutorial() -> void:
+	if tutorial_controller == null:
+		tutorial_controller = TutorialControllerScript.new(self)
+	if tutorial_overlay == null:
+		tutorial_overlay = TutorialOverlayScript.new(self)
+
+
+## 当前是否处于教学关。
+func _tutorial_active() -> bool:
+	return tutorial_controller != null and tutorial_controller.is_active()
 
 
 ## 兼容旧测试入口：设置音频流循环。
@@ -686,6 +710,8 @@ func _render() -> void:
 		_render_overlay()
 	if settings_menu_open:
 		_render_settings_menu()
+	if _tutorial_active():
+		_render_tutorial_guidance()
 
 	previous_card_positions = next_card_positions
 
@@ -1025,6 +1051,31 @@ func _render_start_menu() -> void:
 	start.pressed.connect(_on_start_pressed)
 	_attach_button_press_feedback(start)
 	add_child(start)
+
+	if not tutorial_completed:
+		return
+
+	var tutorial := Button.new()
+	tutorial.set_meta("tutorial_button", true)
+	tutorial.size = Vector2(TOP_BUTTON_W, TOP_BUTTON_H)
+	tutorial.position = _play_area_origin() + Vector2(TOP_CONTROL_X, TOP_CONTROL_Y)
+	tutorial.text = "教学"
+	tutorial.add_theme_font_size_override("font_size", _ui_font(14))
+	tutorial.add_theme_color_override("font_color", Color("#443b32"))
+	tutorial.add_theme_color_override("font_hover_color", Color("#443b32"))
+	tutorial.add_theme_color_override("font_pressed_color", Color("#443b32"))
+	tutorial.add_theme_color_override("font_focus_color", Color("#443b32"))
+	_apply_button_style_states(tutorial, _style(Color("#ffe08a"), card_border, 5, 12))
+	tutorial.z_index = 202
+	tutorial.pressed.connect(_on_tutorial_pressed)
+	_attach_button_press_feedback(tutorial)
+	add_child(tutorial)
+
+
+## 渲染教学高亮和手势演示，不显示任何规则文案。
+func _render_tutorial_guidance() -> void:
+	if tutorial_overlay != null:
+		tutorial_overlay.render(tutorial_controller.guidance())
 
 
 ## 创建卡牌按钮节点；卡牌本身不使用悬停态。
@@ -1550,17 +1601,20 @@ func _card_text_for_board(column: Array, card_idx: int) -> String:
 
 ## 给被覆盖但已翻开的牌添加顶部露出文字条。
 func _add_card_strip_label(parent: Control, text: String) -> void:
+	var inset := 8.0
+	var strip_height := STACK_STEP - inset - 6.0
 	var backing := Panel.new()
 	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	backing.position = Vector2(5, 3)
-	backing.size = Vector2(CARD_W - 10, STACK_STEP - 6)
-	backing.add_theme_stylebox_override("panel", _style(Color(1, 1, 1, 0.72), Color(0, 0, 0, 0), 0, 6))
+	# 露出条是子节点，会盖在卡牌边框上；必须缩进到黑色描边内部。
+	backing.position = Vector2(inset, inset)
+	backing.size = Vector2(CARD_W - inset * 2.0, strip_height)
+	backing.add_theme_stylebox_override("panel", _style(Color(1, 1, 1, 0.72), Color(0, 0, 0, 0), 0, 5))
 	parent.add_child(backing)
 
 	var label := Label.new()
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	label.position = Vector2(3, 2)
-	label.size = Vector2(CARD_W - 6, STACK_STEP - 4)
+	label.position = Vector2(inset + 2.0, inset - 1.0)
+	label.size = Vector2(CARD_W - (inset + 2.0) * 2.0, strip_height)
 	label.text = text.replace("\n", " ")
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -1807,6 +1861,8 @@ func _handle_deck_gui_pressed() -> void:
 func _handle_deck_pressed() -> void:
 	if game_over or deck_animation_busy:
 		return
+	if _tutorial_active() and not tutorial_controller.allows_deck_press():
+		return
 	selected.clear()
 	if deck.size() > 0:
 		_play_card_flip_sfx()
@@ -1820,6 +1876,7 @@ func _handle_deck_pressed() -> void:
 			animating_draw_cards[card["id"]] = true
 			_render()
 			_spawn_draw_card_animation(card)
+		_tutorial_action_succeeded({"action": "deck_draw"})
 		return
 	elif draw_stack.size() > 0:
 		_play_card_flip_sfx()
@@ -1873,6 +1930,8 @@ func _on_board_card_gui_input(event: InputEvent, col_idx: int, card_idx: int) ->
 
 ## 在超过拖拽阈值前，先把按下事件记录为拖拽候选。
 func _begin_drag_candidate(selection_data: Dictionary, local_pos: Vector2, global_pos: Vector2) -> void:
+	if _tutorial_active() and not tutorial_controller.allows_drag_source(selection_data):
+		return
 	drag_candidate = selection_data
 	drag_candidate["pressed_local"] = local_pos
 	drag_candidate["pressed_global"] = global_pos
@@ -1927,21 +1986,36 @@ func _drop_selected_at(global_pos: Vector2) -> void:
 		if _category_slot_rect(i).has_point(local_pos):
 			if _category_slot_occupied(i):
 				var category: String = active_order[i]
+				var target := {"kind": "active_category", "category": category, "slot": i}
+				if _tutorial_active() and not tutorial_controller.allows_drop_target(selected, target):
+					_cancel_drag_drop()
+					return
 				if _move_selected_to_active_category(category):
+					_pending_tutorial_success({"action": "move_to_active_category"})
 					selected["absorb_target_position"] = Vector2(_column_x(i), _layout_y(CATEGORY_Y))
 					selected["absorb_target_slot"] = i
 					_after_successful_move()
 				else:
 					_cancel_drag_drop()
 			else:
+				var target := {"kind": "category_empty", "slot": i}
+				if _tutorial_active() and not tutorial_controller.allows_drop_target(selected, target):
+					_cancel_drag_drop()
+					return
 				if _move_selected_to_empty_category(i):
+					_pending_tutorial_success({"action": "move_to_empty_category"})
 					_after_successful_move()
 				else:
 					_cancel_drag_drop()
 			return
 	for col_idx in range(BOARD_COLUMN_COUNT):
 		if _board_column_rect(col_idx).has_point(local_pos):
+			var target := {"kind": "board_column", "col": col_idx}
+			if _tutorial_active() and not tutorial_controller.allows_drop_target(selected, target):
+				_cancel_drag_drop()
+				return
 			if _move_selected_to_column(col_idx):
+				_pending_tutorial_success({"action": "move_to_column"})
 				_after_successful_move()
 			else:
 				_cancel_drag_drop()
@@ -2225,12 +2299,17 @@ func _kill_round_transition_tween() -> void:
 ## 重新开始按钮回调。
 func _on_restart_pressed() -> void:
 	settings_menu_open = false
+	if _tutorial_active():
+		_start_tutorial()
+		return
 	_start_new_round("点击牌堆开始")
 
 
 ## 首页按钮回调。
 func _on_home_pressed() -> void:
 	_clear_transient_interaction_state()
+	if tutorial_controller != null:
+		tutorial_controller.active = false
 	menu_active = true
 	settings_menu_open = false
 	game_over = false
@@ -2241,7 +2320,29 @@ func _on_home_pressed() -> void:
 ## 开始游戏按钮回调。
 func _on_start_pressed() -> void:
 	settings_menu_open = false
+	if tutorial_controller != null:
+		tutorial_controller.active = false
+	if not tutorial_completed:
+		_start_tutorial()
+		return
 	_start_new_round("开始游戏")
+
+
+## 首页教学按钮回调。
+func _on_tutorial_pressed() -> void:
+	_start_tutorial()
+
+
+## 进入固定教学关。
+func _start_tutorial() -> void:
+	_clear_transient_interaction_state()
+	settings_menu_open = false
+	game_over = false
+	menu_active = false
+	if tutorial_controller == null:
+		_init_tutorial()
+	tutorial_controller.start()
+	_render()
 
 
 ## 打开游戏内设置菜单。
@@ -2283,6 +2384,7 @@ func _load_user_settings() -> void:
 		return
 	music_enabled = bool(config.get_value(USER_SETTINGS_SECTION, "music_enabled", music_enabled))
 	sfx_enabled = bool(config.get_value(USER_SETTINGS_SECTION, "sfx_enabled", sfx_enabled))
+	tutorial_completed = bool(config.get_value(TutorialControllerScript.SETTINGS_SECTION, TutorialControllerScript.SETTINGS_COMPLETED_KEY, tutorial_completed))
 
 
 ## 保存当前音频开关，下次启动自动恢复。
@@ -2290,6 +2392,7 @@ func _save_user_settings() -> void:
 	var config := ConfigFile.new()
 	config.set_value(USER_SETTINGS_SECTION, "music_enabled", music_enabled)
 	config.set_value(USER_SETTINGS_SECTION, "sfx_enabled", sfx_enabled)
+	config.set_value(TutorialControllerScript.SETTINGS_SECTION, TutorialControllerScript.SETTINGS_COMPLETED_KEY, tutorial_completed)
 	config.save(user_settings_path)
 
 
@@ -2318,6 +2421,7 @@ func _clear_transient_interaction_state(clear_transition := true) -> void:
 		_clear_round_transition()
 	drag_candidate.clear()
 	selected.clear()
+	pending_tutorial_action.clear()
 	pending_spawn_positions.clear()
 	pending_draw_animations.clear()
 	animating_draw_cards.clear()
@@ -2661,11 +2765,14 @@ func _consume_step(message: String) -> void:
 	steps_left -= 1
 	status_text = message
 	_check_end_state()
+	_flush_pending_tutorial_success()
 	_render()
 
 
 ## 应用胜利、步数耗尽和无法移动三种终局条件。
 func _check_end_state() -> void:
+	if _tutorial_active():
+		return
 	if _is_win():
 		game_over = true
 		status_text = "过关成功"
@@ -2677,6 +2784,30 @@ func _check_end_state() -> void:
 	if not _has_any_available_step():
 		game_over = true
 		status_text = "无法移动"
+
+
+## 暂存一次教学动作成功，等待正式动画和扣步流程完成后再推进步骤。
+func _pending_tutorial_success(action: Dictionary) -> void:
+	if _tutorial_active():
+		pending_tutorial_action = action.duplicate()
+
+
+## 立即通知教学控制器动作成功，用于抽牌这种没有走 _consume_step 的动作。
+func _tutorial_action_succeeded(action: Dictionary) -> void:
+	if not _tutorial_active():
+		return
+	tutorial_controller.notify_action_succeeded(action)
+	if _tutorial_active():
+		_render()
+
+
+## 在正式移动扣步后推进教学，避免教学状态切换抢在动画/吸收流程前面。
+func _flush_pending_tutorial_success() -> void:
+	if pending_tutorial_action.is_empty():
+		return
+	var action := pending_tutorial_action.duplicate()
+	pending_tutorial_action.clear()
+	_tutorial_action_succeeded(action)
 
 
 ## 判断当前是否已经清空所有牌和类别。

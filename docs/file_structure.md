@@ -13,7 +13,8 @@
 ├── STRUCTURE.md                      # 架构说明与模块职责
 ├── docs/
 │   ├── file_structure.md             # 当前文件
-│   └── game_rules.md                 # 游戏规则说明
+│   ├── game_rules.md                 # 游戏规则说明
+│   └── tutorial_design.md            # 新手教学引导设计
 ├── project.godot                     # Godot 项目配置
 ├── export_presets.cfg                # Godot 导出预设
 ├── icon.svg                          # 项目图标
@@ -39,7 +40,9 @@
 │   ├── category_library.gd           # 总类别/词语牌库
 │   ├── category_selector.gd          # 每局类别抽样、长度限制、混淆 token 过滤
 │   ├── deal_solver.gd                # 随机 DFS 求解器和步数估算
-│   └── game_audio.gd                 # BGM/SFX 播放器与音量模型
+│   ├── game_audio.gd                 # BGM/SFX 播放器与音量模型
+│   ├── tutorial_controller.gd         # 固定新手教学、动作白名单和完成状态
+│   └── tutorial_overlay.gd            # 新手教学高亮和手势动画
 ├── test/
 │   ├── *_smoke.gd                    # 自动化冒烟测试
 │   ├── *_smoke.gd.uid                # Godot 为测试脚本生成的 UID
@@ -57,6 +60,8 @@
 - `scripts/category_selector.gd`：纯规则 helper。它不接触节点树，负责生成本局 3-8 词数槽位、选择类别、抽样词语并过滤冲突。
 - `scripts/deal_solver.gd`：纯求解 helper。它读取当前牌局状态，转换成紧凑 id 状态后进行 DFS。
 - `scripts/game_audio.gd`：音频 helper。它创建 `AudioStreamPlayer` 节点并挂回主场景。
+- `scripts/tutorial_controller.gd`：新手教学 helper。它维护固定教学关、步骤推进、动作白名单和 `tutorial_completed` 持久化；主场景只负责渲染引导并复用正式移动规则。
+- `scripts/tutorial_overlay.gd`：新手教学表现 helper。它把教学步骤的抽象引用转换成当前布局的高亮框和手势动画。
 
 ## 测试文件分组
 
@@ -65,7 +70,7 @@
 - 牌堆/洗牌动画：`deck_*_smoke.gd`、`draw_*_smoke.gd`、`wash_*_smoke.gd`、`repeated_draw_smoke.gd`
 - 拖拽/移动：`drag_*_smoke.gd`、`drop_no_replay_smoke.gd`、`board_drop_extended_hitbox_smoke.gd`
 - 3 区吸收/完成：`category_*_smoke.gd`、`complete_group_category_pulse_smoke.gd`、`board_absorb_reveal_sync_smoke.gd`
-- UI/音频/菜单：`audio_smoke.gd`、`button_click_sfx_scope_smoke.gd`、`board_empty_slot_smoke.gd`、`start_menu_smoke.gd`、`settings_menu_smoke.gd`、`top_controls_smoke.gd`、`no_hover_smoke.gd`
+- UI/音频/菜单/教学：`audio_smoke.gd`、`button_click_sfx_scope_smoke.gd`、`board_empty_slot_smoke.gd`、`start_menu_smoke.gd`、`settings_menu_smoke.gd`、`top_controls_smoke.gd`、`no_hover_smoke.gd`、`tutorial_smoke.gd`
 
 ## 生成和本地文件
 

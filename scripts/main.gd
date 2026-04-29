@@ -30,7 +30,7 @@ const TOP_BUTTON_H := 52.0
 const TOP_BUTTON_GAP := 14.0
 const STEPS_LABEL_Y := 88.0
 const SETTINGS_PANEL_W := 480.0
-const SETTINGS_PANEL_H := 560.0
+const SETTINGS_PANEL_H := 480.0
 const SETTINGS_ACTION_W := 300.0
 const SETTINGS_ACTION_H := 66.0
 const SETTINGS_ACTION_GAP := 18.0
@@ -697,6 +697,8 @@ func _render() -> void:
 
 	if menu_active:
 		_render_start_menu()
+		if settings_menu_open:
+			_render_settings_menu()
 		previous_card_positions = next_card_positions
 		return
 
@@ -807,24 +809,32 @@ func _make_top_button(text: String, pos: Vector2, meta_name: String) -> Button:
 
 ## 渲染游戏内设置弹窗，统一放置音频和导航动作。
 func _render_settings_menu() -> void:
+	var on_home := menu_active
+	var panel_h := 340.0 if on_home else SETTINGS_PANEL_H
 	var shade := ColorRect.new()
 	shade.set_meta("settings_menu_overlay", true)
 	shade.color = Color(0, 0, 0, 0.28)
 	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	shade.mouse_filter = Control.MOUSE_FILTER_STOP
 	shade.z_index = 210
+	shade.gui_input.connect(_on_settings_overlay_gui_input)
 	add_child(shade)
 
 	var panel := Panel.new()
 	panel.set_meta("settings_menu_panel", true)
-	panel.size = Vector2(SETTINGS_PANEL_W, SETTINGS_PANEL_H)
+	panel.size = Vector2(SETTINGS_PANEL_W, panel_h)
 	panel.position = _center_in_safe_area(panel.size)
 	panel.z_index = 211
 	panel.add_theme_stylebox_override("panel", _style(Color("#fff7dc"), card_border, 6, 22))
 	add_child(panel)
 
-	var title := _add_label("菜单", panel.position + Vector2(0, 34), Vector2(panel.size.x, 54), _ui_font(24), Color("#352f2b"), true)
+	var title_text := "设置" if on_home else "菜单"
+	var title := _add_label(title_text, panel.position + Vector2(0, 34), Vector2(panel.size.x, 54), _ui_font(24), Color("#352f2b"), true)
 	title.z_index = 212
+	var close := _make_settings_close_button(panel)
+	close.pressed.connect(_on_settings_close_pressed)
+	add_child(close)
+
 	var first_y := panel.position.y + 112.0
 	var x := panel.position.x + (panel.size.x - SETTINGS_ACTION_W) * 0.5
 	var music := _make_settings_button(
@@ -843,6 +853,9 @@ func _render_settings_menu() -> void:
 	sfx.pressed.connect(_on_sfx_toggle_pressed)
 	add_child(sfx)
 
+	if on_home:
+		return
+
 	var restart := _make_settings_button(
 		"重新开始",
 		Vector2(x, first_y + 2.0 * (SETTINGS_ACTION_H + SETTINGS_ACTION_GAP)),
@@ -858,14 +871,6 @@ func _render_settings_menu() -> void:
 	)
 	home.pressed.connect(_on_home_pressed)
 	add_child(home)
-
-	var close := _make_settings_button(
-		"继续游戏",
-		Vector2(x, first_y + 4.0 * (SETTINGS_ACTION_H + SETTINGS_ACTION_GAP)),
-		"settings_close_button"
-	)
-	close.pressed.connect(_on_settings_close_pressed)
-	add_child(close)
 
 
 ## 创建设置弹窗里的标准按钮。
@@ -885,6 +890,35 @@ func _make_settings_button(text: String, pos: Vector2, meta_name: String) -> But
 	_apply_button_style_states(btn, style)
 	_attach_button_press_feedback(btn)
 	return btn
+
+
+## 创建设置弹窗右上角关闭按钮。
+func _make_settings_close_button(panel: Panel) -> Button:
+	var btn := Button.new()
+	btn.set_meta("settings_close_button", true)
+	btn.size = Vector2(44, 44)
+	var inset := 14.0
+	btn.position = panel.position + Vector2(panel.size.x - btn.size.x - inset, inset)
+	btn.text = ""
+	btn.z_index = 213
+	var style := _style(Color(1, 1, 1, 0), Color(0, 0, 0, 0), 0, 15)
+	_apply_button_style_states(btn, style)
+	_add_close_icon_line(btn, PI / 4.0)
+	_add_close_icon_line(btn, -PI / 4.0)
+	_attach_button_press_feedback(btn)
+	return btn
+
+
+## 给透明关闭按钮画一个几何 X，避免字体字形导致视觉边距不准。
+func _add_close_icon_line(parent: Control, rotation: float) -> void:
+	var line := ColorRect.new()
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.color = Color("#544b4b", 0.84)
+	line.size = Vector2(22, 3)
+	line.position = (parent.size - line.size) * 0.5
+	line.pivot_offset = line.size * 0.5
+	line.rotation = rotation
+	parent.add_child(line)
 
 
 ## 渲染 3 区类别槽位，不添加悬停反馈。
@@ -1055,10 +1089,26 @@ func _render_start_menu() -> void:
 	if not tutorial_completed:
 		return
 
+	var settings := Button.new()
+	settings.set_meta("home_settings_button", true)
+	settings.size = Vector2(TOP_BUTTON_W, TOP_BUTTON_H)
+	settings.position = _play_area_origin() + Vector2(TOP_CONTROL_X, TOP_CONTROL_Y)
+	settings.text = "设置"
+	settings.add_theme_font_size_override("font_size", _ui_font(14))
+	settings.add_theme_color_override("font_color", Color("#443b32"))
+	settings.add_theme_color_override("font_hover_color", Color("#443b32"))
+	settings.add_theme_color_override("font_pressed_color", Color("#443b32"))
+	settings.add_theme_color_override("font_focus_color", Color("#443b32"))
+	_apply_button_style_states(settings, _style(Color("#ffe08a"), card_border, 5, 12))
+	settings.z_index = 202
+	settings.pressed.connect(_on_settings_pressed)
+	_attach_button_press_feedback(settings)
+	add_child(settings)
+
 	var tutorial := Button.new()
 	tutorial.set_meta("tutorial_button", true)
 	tutorial.size = Vector2(TOP_BUTTON_W, TOP_BUTTON_H)
-	tutorial.position = _play_area_origin() + Vector2(TOP_CONTROL_X, TOP_CONTROL_Y)
+	tutorial.position = settings.position + Vector2(TOP_BUTTON_W + TOP_BUTTON_GAP, 0)
 	tutorial.text = "教学"
 	tutorial.add_theme_font_size_override("font_size", _ui_font(14))
 	tutorial.add_theme_color_override("font_color", Color("#443b32"))
@@ -2347,7 +2397,7 @@ func _start_tutorial() -> void:
 
 ## 打开游戏内设置菜单。
 func _on_settings_pressed() -> void:
-	if game_over or menu_active or round_transition_active:
+	if game_over or round_transition_active:
 		return
 	settings_menu_open = true
 	_render()
@@ -2357,6 +2407,12 @@ func _on_settings_pressed() -> void:
 func _on_settings_close_pressed() -> void:
 	settings_menu_open = false
 	_render()
+
+
+## 点击设置弹窗外部遮罩时继续游戏。
+func _on_settings_overlay_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		_on_settings_close_pressed()
 
 
 ## 切换背景音乐开关。

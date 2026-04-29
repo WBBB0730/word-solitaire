@@ -38,6 +38,10 @@ func _process(_delta: float) -> bool:
 			push_error("Start menu smoke failed: tutorial button should be hidden before completion")
 			quit(1)
 			return false
+		if _find_home_settings_button(scene) != null:
+			push_error("Start menu smoke failed: settings button should be hidden before completion")
+			quit(1)
+			return false
 		if _count_buttons(scene) != 1:
 			push_error("Start menu smoke failed: first-run menu should render start button only")
 			quit(1)
@@ -67,12 +71,28 @@ func _process(_delta: float) -> bool:
 			quit(1)
 			return false
 		var tutorial_button := _find_tutorial_button(scene)
-		if _find_start_button(scene) == null or tutorial_button == null:
-			push_error("Start menu smoke failed: completed menu should show start and small tutorial buttons")
+		var settings_button := _find_home_settings_button(scene)
+		if _find_start_button(scene) == null or tutorial_button == null or settings_button == null:
+			push_error("Start menu smoke failed: completed menu should show start, tutorial, and settings buttons")
 			quit(1)
 			return false
-		if _count_buttons(scene) != 2:
-			push_error("Start menu smoke failed: completed menu should render exactly two buttons")
+		if _count_buttons(scene) != 3:
+			push_error("Start menu smoke failed: completed menu should render exactly three buttons")
+			quit(1)
+			return false
+		settings_button.pressed.emit()
+		if not scene.settings_menu_open:
+			push_error("Start menu smoke failed: home settings button should open settings menu")
+			quit(1)
+			return false
+		if _find_meta_button(scene, "restart_button") != null or _find_meta_button(scene, "home_button") != null:
+			push_error("Start menu smoke failed: home settings menu should only show audio controls")
+			quit(1)
+			return false
+		scene._on_settings_close_pressed()
+		tutorial_button = _find_tutorial_button(scene)
+		if tutorial_button == null:
+			push_error("Start menu smoke failed: tutorial button disappeared after closing settings")
 			quit(1)
 			return false
 		tutorial_button.pressed.emit()
@@ -106,6 +126,26 @@ func _find_tutorial_button(node: Node) -> Button:
 		if child is Button and child.has_meta("tutorial_button"):
 			return child
 		var nested := _find_tutorial_button(child)
+		if nested != null:
+			return nested
+	return null
+
+
+func _find_home_settings_button(node: Node) -> Button:
+	for child in node.get_children():
+		if child is Button and child.has_meta("home_settings_button"):
+			return child
+		var nested := _find_home_settings_button(child)
+		if nested != null:
+			return nested
+	return null
+
+
+func _find_meta_button(node: Node, meta_name: String) -> Button:
+	for child in node.get_children():
+		if child is Button and child.has_meta(meta_name):
+			return child
+		var nested := _find_meta_button(child, meta_name)
 		if nested != null:
 			return nested
 	return null

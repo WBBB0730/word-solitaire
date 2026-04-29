@@ -1,11 +1,15 @@
 extends SceneTree
 
+const TEMP_SETTINGS_PATH := "user://audio_smoke.cfg"
+
 var scene: Node
 var checked := false
 
 
 func _initialize() -> void:
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(TEMP_SETTINGS_PATH))
 	scene = load("res://scenes/main.tscn").instantiate()
+	scene.user_settings_path = TEMP_SETTINGS_PATH
 	root.add_child(scene)
 
 
@@ -13,6 +17,29 @@ func _process(_delta: float) -> bool:
 	if checked:
 		return false
 	checked = true
+
+	var disabled_scene: Node = load("res://scenes/main.tscn").instantiate()
+	disabled_scene.user_settings_path = TEMP_SETTINGS_PATH
+	_write_audio_settings(TEMP_SETTINGS_PATH, false, true)
+	root.add_child(disabled_scene)
+	if disabled_scene.music_enabled:
+		push_error("Audio smoke failed: disabled music setting was not loaded")
+		disabled_scene.queue_free()
+		quit(1)
+		return false
+	if disabled_scene.music_player.playing:
+		push_error("Audio smoke failed: disabled music started during initialization")
+		disabled_scene.queue_free()
+		quit(1)
+		return false
+	disabled_scene._play_button_click_sfx()
+	disabled_scene._sync_audio_enabled_state()
+	if disabled_scene.music_player.playing:
+		push_error("Audio smoke failed: disabled music started after first interaction")
+		disabled_scene.queue_free()
+		quit(1)
+		return false
+	disabled_scene.queue_free()
 
 	if not is_instance_valid(scene.music_player):
 		push_error("Audio smoke failed: music player was not created")
@@ -32,6 +59,24 @@ func _process(_delta: float) -> bool:
 		return false
 	if abs(scene.MUSIC_VOLUME_DB - scene._audio_balanced_volume_db(scene.MUSIC_BASE_VOLUME_DB, scene.MUSIC_TRIM_DB)) > 0.001:
 		push_error("Audio smoke failed: music volume is not derived from base plus trim")
+		quit(1)
+		return false
+	scene.music_enabled = false
+	scene._sync_audio_enabled_state()
+	if scene.music_player.playing:
+		push_error("Audio smoke failed: disabled music should stop instead of pausing")
+		quit(1)
+		return false
+	scene._play_button_click_sfx()
+	scene._sync_audio_enabled_state()
+	if scene.music_player.playing:
+		push_error("Audio smoke failed: disabled music restarted after input-like action")
+		quit(1)
+		return false
+	scene.music_enabled = true
+	scene._sync_audio_enabled_state()
+	if not scene.music_player.playing:
+		push_error("Audio smoke failed: re-enabled music did not start")
 		quit(1)
 		return false
 	if _stream_has_loop(scene.music_player.stream) and not bool(scene.music_player.stream.get("loop")):
@@ -90,6 +135,7 @@ func _process(_delta: float) -> bool:
 			return false
 
 	print("AUDIO_SMOKE_PASS")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(TEMP_SETTINGS_PATH))
 	quit(0)
 	return false
 
@@ -99,3 +145,10 @@ func _stream_has_loop(stream: AudioStream) -> bool:
 		if property.get("name", "") == "loop":
 			return true
 	return false
+
+
+func _write_audio_settings(settings_path: String, music: bool, sfx: bool) -> void:
+	var config := ConfigFile.new()
+	config.set_value(scene.USER_SETTINGS_SECTION, "music_enabled", music)
+	config.set_value(scene.USER_SETTINGS_SECTION, "sfx_enabled", sfx)
+	config.save(settings_path)

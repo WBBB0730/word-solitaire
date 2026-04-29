@@ -46,9 +46,9 @@ func init_audio() -> void:
 		music_player.stream = music_stream
 		music_player.volume_db = game.MUSIC_VOLUME_DB
 		game.add_child(music_player)
-		if music_player.is_inside_tree():
+		if game.music_enabled and music_player.is_inside_tree():
 			music_player.play()
-		else:
+		elif game.music_enabled:
 			game.call_deferred("_play_background_music")
 
 	card_flip_sfx_stream = load(game.CARD_FLIP_SFX_PATH)

@@ -2483,7 +2483,9 @@ func _sync_audio_enabled_state() -> void:
 				music_player.stream_paused = false
 		else:
 			if music_player.is_inside_tree():
-				music_player.stream_paused = true
+				# Web 端被浏览器拦截的 play() 可能在首次点击后恢复；关闭时直接 stop。
+				music_player.stop()
+				music_player.stream_paused = false
 	for player in sfx_players:
 		if is_instance_valid(player) and not sfx_enabled:
 			player.stop()

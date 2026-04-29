@@ -1045,26 +1045,47 @@ func _render_overlay() -> void:
 	add_child(shade)
 
 	var panel := Panel.new()
-	panel.size = Vector2(500, 230)
+	panel.size = Vector2(500, 270)
 	panel.position = _center_in_safe_area(panel.size)
 	panel.add_theme_stylebox_override("panel", _style(Color("#fff7dc"), card_border, 6, 22))
 	add_child(panel)
 
 	_add_label(status_text, panel.position + Vector2(40, 54), Vector2(420, 64), _ui_font(24), Color("#352f2b"), true)
+	var button_size := Vector2(190, 64)
+	var button_gap := 24.0
+	var buttons_x := panel.position.x + (panel.size.x - button_size.x * 2.0 - button_gap) * 0.5
+	var buttons_y := panel.position.y + 156.0
+	var restart_style := _style(Color("#ffe08a"), card_border, 5, 14)
+
 	var restart := Button.new()
-	restart.size = Vector2(220, 64)
-	restart.position = panel.position + Vector2((panel.size.x - restart.size.x) * 0.5, 140)
+	restart.set_meta("restart_button", true)
+	restart.size = button_size
+	restart.position = Vector2(buttons_x, buttons_y)
 	restart.text = "再来一局"
 	restart.add_theme_font_size_override("font_size", _ui_font(20))
 	restart.add_theme_color_override("font_color", Color("#544b4b"))
 	restart.add_theme_color_override("font_hover_color", Color("#544b4b"))
 	restart.add_theme_color_override("font_pressed_color", Color("#544b4b"))
 	restart.add_theme_color_override("font_focus_color", Color("#544b4b"))
-	var restart_style := _style(Color("#ffe08a"), card_border, 5, 14)
 	_apply_button_style_states(restart, restart_style)
 	restart.pressed.connect(_on_restart_pressed)
 	_attach_button_press_feedback(restart)
 	add_child(restart)
+
+	var home := Button.new()
+	home.set_meta("home_button", true)
+	home.size = button_size
+	home.position = Vector2(buttons_x + button_size.x + button_gap, buttons_y)
+	home.text = "回到首页"
+	home.add_theme_font_size_override("font_size", _ui_font(20))
+	home.add_theme_color_override("font_color", Color("#544b4b"))
+	home.add_theme_color_override("font_hover_color", Color("#544b4b"))
+	home.add_theme_color_override("font_pressed_color", Color("#544b4b"))
+	home.add_theme_color_override("font_focus_color", Color("#544b4b"))
+	_apply_button_style_states(home, restart_style)
+	home.pressed.connect(_on_home_pressed)
+	_attach_button_press_feedback(home)
+	add_child(home)
 
 
 ## 渲染独立开始菜单页面。

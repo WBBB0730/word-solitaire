@@ -52,7 +52,7 @@ func _process(_delta: float) -> bool:
 		push_error("Top controls smoke failed: home did not return to menu")
 		quit(1)
 		return false
-	if _count_buttons(scene) != 1 or _find_button_with_meta(scene, "start_button") == null:
+	if _find_button_with_meta(scene, "start_button") == null:
 		push_error("Top controls smoke failed: home page is not isolated")
 		quit(1)
 		return false

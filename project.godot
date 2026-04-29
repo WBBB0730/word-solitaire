@@ -10,11 +10,13 @@ config_version=5
 
 [application]
 
-	config/name="Word Solitaire"
-	config/version="0.0.1"
-	run/main_scene="res://scenes/main.tscn"
-	config/features=PackedStringArray("4.6", "Mobile")
-	config/icon="res://icon.svg"
+config/name="Word Solitaire"
+config/version="0.0.1"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.6", "Mobile")
+boot_splash/bg_color=Color(0.662745, 0.843137, 0.556863, 1)
+boot_splash/show_image=false
+config/icon="res://icon.svg"
 
 [display]
 
@@ -26,7 +28,7 @@ window/handheld/orientation=1
 
 [gui]
 
-theme/custom_font="res://assets/fonts/SourceHanSansSC-Medium.otf"
+theme/custom_font="uid://8obxrcsvfj0r"
 
 [physics]
 

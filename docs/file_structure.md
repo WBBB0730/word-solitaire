@@ -18,6 +18,8 @@
 ├── export_presets.cfg                # Godot 导出预设
 ├── icon.svg                          # 项目图标
 ├── icon.svg.import                   # Godot 图标导入配置
+├── web/
+│   └── shell.html                    # Web 导出启动页模板，控制浏览器加载阶段的背景
 ├── assets/
 │   ├── fonts/
 │   │   ├── SourceHanSansSC-Medium.otf # Web/桌面/移动端统一中文 UI 字体

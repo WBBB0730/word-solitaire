@@ -1,13 +1,13 @@
 ## 局内道具系统。
 ##
-## 第一版只使用每局固定数量。这里刻意把数量、撤回快照和提示搜索集中管理，
-## 后续改成永久库存、广告奖励或付费消耗时，主场景只需要继续调用同一组入口。
+## 道具数量为永久库存，撤回快照和当前提示仍然按局重置。
+## 后续接入广告奖励或付费消耗时，主场景只需要继续调用同一组入口。
 class_name PropSystem
 extends RefCounted
 
 const PROP_HINT := "hint"
 const PROP_UNDO := "undo"
-const DEFAULT_COUNTS := {
+const DEFAULT_INVENTORY := {
 	PROP_HINT: 3,
 	PROP_UNDO: 3,
 }
@@ -21,12 +21,17 @@ var active_hint := {}
 
 func _init(game_scene: Node) -> void:
 	game = game_scene
+	reset_inventory()
 	reset_round()
 
 
-## 开始新局时重置本局固定道具数量和撤回历史。
+## 首次启动或测试重置时初始化永久库存。
+func reset_inventory() -> void:
+	counts = DEFAULT_INVENTORY.duplicate()
+
+
+## 开始新局时只重置撤回历史和当前提示，不重置永久库存。
 func reset_round() -> void:
-	counts = DEFAULT_COUNTS.duplicate()
 	undo_stack.clear()
 	active_hint.clear()
 
@@ -42,14 +47,34 @@ func count(prop_name: String) -> int:
 	return int(counts.get(prop_name, 0))
 
 
+## 设置永久库存数量，用于读取本地存档。
+func set_count(prop_name: String, value: int) -> void:
+	counts[prop_name] = max(0, value)
+
+
+## 广告或未来付费奖励增加永久库存。
+func add_count(prop_name: String, amount: int) -> void:
+	set_count(prop_name, count(prop_name) + amount)
+
+
 ## 是否可以点击提示。
 func can_use_hint() -> bool:
 	return should_show() and active_hint.is_empty() and count(PROP_HINT) > 0 and not find_hint_guidance().is_empty()
 
 
+## 是否可以通过广告补一次提示并立即使用。
+func can_request_hint_ad() -> bool:
+	return should_show() and active_hint.is_empty() and count(PROP_HINT) <= 0 and not find_hint_guidance().is_empty()
+
+
 ## 是否可以点击撤回。
 func can_use_undo() -> bool:
 	return should_show() and count(PROP_UNDO) > 0 and not undo_stack.is_empty()
+
+
+## 是否可以通过广告补一次撤回并立即使用。
+func can_request_undo_ad() -> bool:
+	return should_show() and count(PROP_UNDO) <= 0 and not undo_stack.is_empty()
 
 
 ## 消耗一次提示，并显示下一步可行动作的教程式遮罩。
@@ -61,6 +86,7 @@ func use_hint() -> bool:
 		return false
 	counts[PROP_HINT] = count(PROP_HINT) - 1
 	active_hint = guidance
+	game._save_user_settings()
 	game._render()
 	return true
 
@@ -74,6 +100,7 @@ func use_undo() -> bool:
 	active_hint.clear()
 	_restore_snapshot(snapshot)
 	game.status_text = "已撤回"
+	game._save_user_settings()
 	game._render()
 	return true
 

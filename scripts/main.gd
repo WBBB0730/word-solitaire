@@ -8,11 +8,13 @@ const CategorySelectorScript := preload("res://scripts/category_selector.gd")
 const CategoryLibraryScript := preload("res://scripts/category_library.gd")
 const DealSolverScript := preload("res://scripts/deal_solver.gd")
 const GameAudioScript := preload("res://scripts/game_audio.gd")
+const AdServiceScript := preload("res://scripts/ads/ad_service.gd")
 const PropSystemScript := preload("res://scripts/prop_system.gd")
 const TutorialControllerScript := preload("res://scripts/tutorial_controller.gd")
 const TutorialOverlayScript := preload("res://scripts/tutorial_overlay.gd")
 const PropHintTexture := preload("res://assets/props/prop_hint.png")
 const PropUndoTexture := preload("res://assets/props/prop_undo.png")
+const AdPlayTexture := preload("res://assets/ui/ad_play.svg")
 
 const GAME_W := 720.0
 const GAME_H := 1280.0
@@ -58,6 +60,21 @@ const SOLVER_DFS_SAMPLE_MAX := 10
 const SOLVER_DFS_PRIORITY_JITTER := 4.0
 const SOLVER_STEP_PADDING_RATIO := 0.25
 const SOLVER_STEP_PADDING_MIN := 16
+const EXTRA_STEPS_AD_REWARD := 20
+const AD_CHEAT_SEQUENCE := [
+	KEY_UP,
+	KEY_UP,
+	KEY_DOWN,
+	KEY_DOWN,
+	KEY_LEFT,
+	KEY_RIGHT,
+	KEY_LEFT,
+	KEY_RIGHT,
+	KEY_B,
+	KEY_A,
+	KEY_B,
+	KEY_A,
+]
 const DRAG_THRESHOLD := 8.0
 const ANIM_TIME := 0.18
 const DRAW_ANIM_TIME := 0.28
@@ -76,6 +93,7 @@ const CARD_FLIP_SFX_PATH := "res://assets/audio/card_flip.wav"
 const BUTTON_CLICK_SFX_PATH := "res://assets/audio/button_click.mp3"
 const USER_SETTINGS_PATH := "user://settings.cfg"
 const USER_SETTINGS_SECTION := "audio"
+const PROP_SETTINGS_SECTION := "props"
 const SFX_PLAYER_COUNT := 4
 const BUTTON_SFX_PLAYER_COUNT := 3
 const MUSIC_BASE_VOLUME_DB := -8.0
@@ -154,7 +172,9 @@ var round_transition_tween: Tween
 var pending_round_message := ""
 ## 音频辅助对象。下面的公开音频字段会同步它，方便测试和调试。
 var audio_manager: RefCounted
-## 局内道具辅助对象。当前只管理每局固定次数，后续可替换为永久库存。
+## 广告服务入口。主逻辑只通过它请求奖励，不直接依赖具体广告 SDK。
+var ad_service: RefCounted
+## 局内道具辅助对象。管理永久库存、撤回快照和提示搜索。
 var prop_system: RefCounted
 ## 新手教学控制器。固定教学关、步骤白名单和完成状态保存在独立脚本中。
 var tutorial_controller: RefCounted
@@ -177,6 +197,12 @@ var last_solver_attempts := 0
 var last_solver_steps := 0
 var last_solver_states := 0
 var last_solver_found := false
+## 本局是否已经成功领取过广告加步数奖励。
+var extra_steps_ad_used := false
+## 正在等待回调的激励广告位。非空时局内输入会暂停。
+var pending_rewarded_placement := ""
+## 编辑器广告后门秘籍的当前匹配位置。
+var ad_cheat_index := 0
 ## 是否允许运行时响应视口尺寸变化。
 var layout_resize_ready := false
 ## 尺寸变化会合并到下一帧刷新，避免拖拽窗口时连续重建 UI。
@@ -200,9 +226,10 @@ var category_empty_slot_color := Color("#f6d86a", 0.42)
 func _ready() -> void:
 	_configure_root_layout()
 	_bind_viewport_resize_signal()
+	_init_props()
 	_load_user_settings()
 	_init_audio()
-	_init_props()
+	_init_ads()
 	_init_tutorial()
 	randomize()
 	_init_level()
@@ -219,6 +246,9 @@ func _notification(what: int) -> void:
 
 ## 处理全局拖拽过程中的移动和松手事件。
 func _input(event: InputEvent) -> void:
+	_handle_ad_cheat_input(event)
+	if _ad_is_showing():
+		return
 	if round_transition_active:
 		return
 	if settings_menu_open:
@@ -247,6 +277,14 @@ func _init_audio() -> void:
 	_sync_audio_enabled_state()
 
 
+## 初始化广告服务，并监听激励广告结果。
+func _init_ads() -> void:
+	if ad_service == null:
+		ad_service = AdServiceScript.new(self)
+		ad_service.rewarded_ad_completed.connect(_on_rewarded_ad_completed)
+		ad_service.rewarded_ad_failed.connect(_on_rewarded_ad_failed)
+
+
 ## 初始化局内道具系统。
 func _init_props() -> void:
 	if prop_system == null:
@@ -259,6 +297,31 @@ func _init_tutorial() -> void:
 		tutorial_controller = TutorialControllerScript.new(self)
 	if tutorial_overlay == null:
 		tutorial_overlay = TutorialOverlayScript.new(self)
+
+
+## 处理编辑器专用广告后门秘籍：上上下下左右左右 B A B A。
+func _handle_ad_cheat_input(event: InputEvent) -> void:
+	if not OS.has_feature("editor"):
+		return
+	if not event is InputEventKey or not event.pressed or event.echo:
+		return
+	var keycode: int = int(event.keycode)
+	if keycode == AD_CHEAT_SEQUENCE[ad_cheat_index]:
+		ad_cheat_index += 1
+		if ad_cheat_index >= AD_CHEAT_SEQUENCE.size():
+			ad_cheat_index = 0
+			_toggle_editor_ad_bypass()
+		return
+	ad_cheat_index = 1 if keycode == AD_CHEAT_SEQUENCE[0] else 0
+
+
+## 切换编辑器广告后门，并用状态文案给轻量反馈。
+func _toggle_editor_ad_bypass() -> void:
+	if ad_service == null:
+		return
+	var enabled: bool = ad_service.toggle_editor_bypass()
+	status_text = "广告后门：" + ("开" if enabled else "关")
+	_render()
 
 
 ## 当前是否处于教学关。
@@ -1066,7 +1129,8 @@ func _render_overlay() -> void:
 	add_child(shade)
 
 	var panel := Panel.new()
-	panel.size = Vector2(500, 270)
+	var show_extra_steps := _should_offer_extra_steps_ad()
+	panel.size = Vector2(500, 360) if show_extra_steps else Vector2(500, 270)
 	panel.position = _center_in_safe_area(panel.size)
 	panel.add_theme_stylebox_override("panel", _style(Color("#fff7dc"), card_border, 6, 22))
 	add_child(panel)
@@ -1075,8 +1139,19 @@ func _render_overlay() -> void:
 	var button_size := Vector2(190, 64)
 	var button_gap := 24.0
 	var buttons_x := panel.position.x + (panel.size.x - button_size.x * 2.0 - button_gap) * 0.5
-	var buttons_y := panel.position.y + 156.0
+	var buttons_y := panel.position.y + (246.0 if show_extra_steps else 156.0)
 	var restart_style := _style(Color("#ffe08a"), card_border, 5, 14)
+
+	if show_extra_steps:
+		var extra_steps := _make_ad_action_button(
+			"增加步数",
+			Vector2(panel.position.x + 100.0, panel.position.y + 150.0),
+			Vector2(300, 64),
+			"extra_steps_ad_button",
+			not _ad_is_showing()
+		)
+		extra_steps.pressed.connect(_on_extra_steps_ad_pressed)
+		add_child(extra_steps)
 
 	var restart := Button.new()
 	restart.set_meta("restart_button", true)
@@ -1164,7 +1239,7 @@ func _render_start_menu() -> void:
 	add_child(tutorial)
 
 
-## 渲染局内道具按钮。完成新手教学后才显示，当前每局固定次数。
+## 渲染局内道具按钮。完成新手教学后才显示，库存为 0 时可显示广告入口。
 func _render_prop_area() -> void:
 	if prop_system == null or not prop_system.should_show():
 		return
@@ -1175,8 +1250,9 @@ func _render_prop_area() -> void:
 		"hint",
 		Vector2(start_x, y),
 		"hint_prop_button",
-		prop_system.can_use_hint(),
-		prop_system.count(PropSystemScript.PROP_HINT)
+		_can_press_hint_prop(),
+		prop_system.count(PropSystemScript.PROP_HINT),
+		_prop_needs_ad(PropSystemScript.PROP_HINT)
 	)
 	hint.pressed.connect(_on_hint_prop_pressed)
 	add_child(hint)
@@ -1185,15 +1261,16 @@ func _render_prop_area() -> void:
 		"undo",
 		Vector2(start_x + PROP_BUTTON_W + PROP_BUTTON_GAP, y),
 		"undo_prop_button",
-		prop_system.can_use_undo(),
-		prop_system.count(PropSystemScript.PROP_UNDO)
+		_can_press_undo_prop(),
+		prop_system.count(PropSystemScript.PROP_UNDO),
+		_prop_needs_ad(PropSystemScript.PROP_UNDO)
 	)
 	undo.pressed.connect(_on_undo_prop_pressed)
 	add_child(undo)
 
 
 ## 创建局内道具按钮，并复用普通按钮的按压动效和音效。
-func _make_prop_button(icon_name: String, pos: Vector2, meta_name: String, enabled: bool, count: int) -> Button:
+func _make_prop_button(icon_name: String, pos: Vector2, meta_name: String, enabled: bool, count: int, ad_mode := false) -> Button:
 	var btn := Button.new()
 	btn.set_meta(meta_name, true)
 	btn.position = pos
@@ -1208,7 +1285,10 @@ func _make_prop_button(icon_name: String, pos: Vector2, meta_name: String, enabl
 	_apply_button_style_states(btn, _style(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 18))
 	btn.z_index = 120
 	_add_prop_icon(btn, icon_name, enabled)
-	_add_prop_badge(btn, count, enabled)
+	if ad_mode:
+		_add_prop_ad_badge(btn, enabled)
+	else:
+		_add_prop_badge(btn, count, enabled)
 	_attach_button_press_feedback(btn)
 	return btn
 
@@ -1241,6 +1321,90 @@ func _add_prop_badge(parent: Button, count: int, enabled: bool) -> void:
 	var label := _add_generated_label(badge, str(count), Vector2.ZERO, badge.size, _ui_font(13), Color.WHITE)
 	label.position = Vector2(0, -1)
 	label.add_theme_constant_override("line_spacing", 0)
+
+
+## 道具次数为 0 但可以看广告使用时，角标显示广告播放标识。
+func _add_prop_ad_badge(parent: Button, enabled: bool) -> void:
+	var badge := Panel.new()
+	badge.set_meta("prop_ad_badge", true)
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.size = Vector2(PROP_BADGE_SIZE, PROP_BADGE_SIZE)
+	badge.position = Vector2(parent.size.x - PROP_BADGE_SIZE * 0.70, -PROP_BADGE_SIZE * 0.36)
+	badge.z_index = parent.z_index + 1
+	var fill := Color("#4d9be8") if enabled else PROP_DISABLED_COLOR
+	badge.add_theme_stylebox_override("panel", _style(fill, Color.WHITE, 2, int(PROP_BADGE_SIZE * 0.5)))
+	parent.add_child(badge)
+	_add_ad_play_texture_icon(badge, Color.WHITE, Vector2(8, 8), Vector2(20, 20))
+
+
+## 创建带播放图标的广告动作按钮。
+func _make_ad_action_button(text: String, pos: Vector2, button_size: Vector2, meta_name: String, enabled: bool) -> Button:
+	var btn := Button.new()
+	btn.set_meta(meta_name, true)
+	btn.position = pos
+	btn.size = button_size
+	btn.text = text
+	btn.disabled = not enabled
+	btn.add_theme_font_size_override("font_size", _ui_font(18))
+	btn.add_theme_color_override("font_color", Color("#544b4b"))
+	btn.add_theme_color_override("font_hover_color", Color("#544b4b"))
+	btn.add_theme_color_override("font_pressed_color", Color("#544b4b"))
+	btn.add_theme_color_override("font_focus_color", Color("#544b4b"))
+	btn.add_theme_color_override("font_disabled_color", Color("#7a746c"))
+	_apply_button_style_states(btn, _style(Color("#ffe08a"), card_border, 5, 14))
+	_add_ad_play_texture_icon(btn, Color("#544b4b"), Vector2(50, 20), Vector2(24, 24))
+	_attach_button_press_feedback(btn)
+	return btn
+
+
+## 绘制简单播放三角形，避免引入额外广告图标资源。
+func _add_ad_play_icon(parent: Control, color: Color, pos: Vector2, size_value: float) -> void:
+	var icon := Polygon2D.new()
+	icon.set_meta("ad_play_icon", true)
+	icon.color = color
+	icon.polygon = PackedVector2Array([
+		pos,
+		pos + Vector2(0.0, size_value),
+		pos + Vector2(size_value * 0.86, size_value * 0.5),
+	])
+	icon.z_index = parent.z_index + 1
+	parent.add_child(icon)
+
+
+## 使用用户提供的 SVG 播放图标，确保广告入口图标统一。
+func _add_ad_play_texture_icon(parent: Control, color: Color, pos: Vector2, icon_size: Vector2) -> void:
+	var icon := TextureRect.new()
+	icon.set_meta("ad_play_icon", true)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.texture = AdPlayTexture
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.position = pos
+	icon.size = icon_size
+	icon.modulate = color
+	icon.z_index = parent.z_index + 1
+	parent.add_child(icon)
+
+
+
+
+## 提示按钮可用：有库存可直接用，或无库存但可通过广告补用。
+func _can_press_hint_prop() -> bool:
+	if prop_system == null or _ad_is_showing():
+		return false
+	return prop_system.can_use_hint() or _rewarded_action_is_available(AdServiceScript.PLACEMENT_PROP_HINT)
+
+
+## 撤回按钮可用：有库存可直接用，或无库存但可通过广告补用。
+func _can_press_undo_prop() -> bool:
+	if prop_system == null or _ad_is_showing():
+		return false
+	return prop_system.can_use_undo() or _rewarded_action_is_available(AdServiceScript.PLACEMENT_PROP_UNDO)
+
+
+## 道具角标是否应该显示广告标识。
+func _prop_needs_ad(prop_name: String) -> bool:
+	return prop_system != null and prop_system.count(prop_name) <= 0
 
 
 ## 渲染教学高亮和手势演示，不显示任何规则文案。
@@ -2015,7 +2179,7 @@ func _on_deck_pressed() -> void:
 
 ## 处理牌堆的鼠标/触摸输入。
 func _on_deck_gui_input(event: InputEvent) -> void:
-	if menu_active or game_over:
+	if menu_active or game_over or _ad_is_showing():
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		_handle_deck_gui_pressed()
@@ -2036,7 +2200,7 @@ func _handle_deck_gui_pressed() -> void:
 
 ## 处理牌堆点击：抽牌、启动洗牌动画，或提示牌堆已空。
 func _handle_deck_pressed() -> void:
-	if game_over or deck_animation_busy:
+	if game_over or deck_animation_busy or _ad_is_showing():
 		return
 	if _tutorial_active() and not tutorial_controller.allows_deck_press():
 		return
@@ -2080,7 +2244,7 @@ func _handle_deck_pressed() -> void:
 
 ## 处理 1 区顶牌的拖拽输入。
 func _on_draw_card_gui_input(event: InputEvent, card_index: int) -> void:
-	if menu_active or game_over:
+	if menu_active or game_over or _ad_is_showing():
 		return
 	if card_index != draw_stack.size() - 1:
 		return
@@ -2095,7 +2259,7 @@ func _on_draw_card_gui_input(event: InputEvent, card_index: int) -> void:
 
 ## 处理 4 区可移动牌组的拖拽输入。
 func _on_board_card_gui_input(event: InputEvent, col_idx: int, card_idx: int) -> void:
-	if menu_active or game_over:
+	if menu_active or game_over or _ad_is_showing():
 		return
 	var selection := _selection_for_board(col_idx, card_idx)
 	if selection.is_empty():
@@ -2330,6 +2494,8 @@ func _setup_new_round(message: String) -> void:
 	previous_card_positions.clear()
 	next_card_id = 1
 	steps_left = STARTING_STEPS
+	extra_steps_ad_used = false
+	pending_rewarded_placement = ""
 	game_over = false
 	menu_active = false
 	status_text = message
@@ -2506,6 +2672,7 @@ func _on_home_pressed() -> void:
 	menu_active = true
 	settings_menu_open = false
 	game_over = false
+	pending_rewarded_placement = ""
 	selected.clear()
 	_render()
 
@@ -2528,14 +2695,22 @@ func _on_tutorial_pressed() -> void:
 
 ## 点击提示道具：消耗一次并显示下一步可操作的教程式引导。
 func _on_hint_prop_pressed() -> void:
-	if prop_system != null:
+	if prop_system == null:
+		return
+	if prop_system.count(PropSystemScript.PROP_HINT) > 0:
 		prop_system.use_hint()
+		return
+	_request_rewarded_ad(AdServiceScript.PLACEMENT_PROP_HINT)
 
 
 ## 点击撤回道具：恢复到上一个正式动作之前。
 func _on_undo_prop_pressed() -> void:
-	if prop_system != null:
+	if prop_system == null:
+		return
+	if prop_system.count(PropSystemScript.PROP_UNDO) > 0:
 		prop_system.use_undo()
+		return
+	_request_rewarded_ad(AdServiceScript.PLACEMENT_PROP_UNDO)
 
 
 ## 进入固定教学关。
@@ -2553,7 +2728,7 @@ func _start_tutorial() -> void:
 
 ## 打开游戏内设置菜单。
 func _on_settings_pressed() -> void:
-	if game_over or round_transition_active:
+	if game_over or round_transition_active or _ad_is_showing():
 		return
 	settings_menu_open = true
 	_render()
@@ -2589,6 +2764,74 @@ func _on_sfx_toggle_pressed() -> void:
 	_render()
 
 
+## 非正式包广告后门的异步完成入口，由 DebugAdProvider 下一帧调用。
+func _debug_complete_rewarded_ad(placement: String) -> void:
+	if ad_service != null:
+		ad_service.complete_debug_rewarded_ad(placement)
+
+
+## 请求激励广告，并在等待 SDK/Provider 回调时暂停局内输入。
+func _request_rewarded_ad(placement: String) -> bool:
+	if ad_service == null or pending_rewarded_placement != "":
+		return false
+	if not _rewarded_action_is_available(placement):
+		status_text = "广告暂不可用"
+		_render()
+		return false
+	if not ad_service.can_show_rewarded(placement):
+		status_text = "广告暂不可用"
+		_render()
+		return false
+	pending_rewarded_placement = placement
+	_render()
+	if ad_service.show_rewarded(placement):
+		return true
+	pending_rewarded_placement = ""
+	status_text = "广告暂不可用"
+	_render()
+	return false
+
+
+## 指定广告位当前是否有可奖励的业务动作；不判断真实广告是否已加载。
+func _rewarded_action_is_available(placement: String) -> bool:
+	if placement == AdServiceScript.PLACEMENT_PROP_HINT:
+		return prop_system != null and prop_system.can_request_hint_ad()
+	if placement == AdServiceScript.PLACEMENT_PROP_UNDO:
+		return prop_system != null and prop_system.can_request_undo_ad()
+	if placement == AdServiceScript.PLACEMENT_EXTRA_STEPS:
+		return _should_offer_extra_steps_ad()
+	return false
+
+
+## 激励广告完整看完后，根据广告位发放奖励。
+func _on_rewarded_ad_completed(placement: String) -> void:
+	if pending_rewarded_placement != placement:
+		return
+	pending_rewarded_placement = ""
+	if placement == AdServiceScript.PLACEMENT_PROP_HINT:
+		prop_system.add_count(PropSystemScript.PROP_HINT, 1)
+		prop_system.use_hint()
+	elif placement == AdServiceScript.PLACEMENT_PROP_UNDO:
+		prop_system.add_count(PropSystemScript.PROP_UNDO, 1)
+		prop_system.use_undo()
+	elif placement == AdServiceScript.PLACEMENT_EXTRA_STEPS:
+		extra_steps_ad_used = true
+		steps_left += EXTRA_STEPS_AD_REWARD
+		game_over = false
+		status_text = "获得步数"
+		_render()
+	_save_user_settings()
+
+
+## 激励广告没有完成时恢复当前流程，不发放奖励。
+func _on_rewarded_ad_failed(placement: String, _reason: String) -> void:
+	if pending_rewarded_placement != placement:
+		return
+	pending_rewarded_placement = ""
+	status_text = "步数用完" if placement == AdServiceScript.PLACEMENT_EXTRA_STEPS else "广告暂不可用"
+	_render()
+
+
 ## 从本地用户配置读取上次保存的音频开关。
 func _load_user_settings() -> void:
 	var config := ConfigFile.new()
@@ -2597,6 +2840,9 @@ func _load_user_settings() -> void:
 	music_enabled = bool(config.get_value(USER_SETTINGS_SECTION, "music_enabled", music_enabled))
 	sfx_enabled = bool(config.get_value(USER_SETTINGS_SECTION, "sfx_enabled", sfx_enabled))
 	tutorial_completed = bool(config.get_value(TutorialControllerScript.SETTINGS_SECTION, TutorialControllerScript.SETTINGS_COMPLETED_KEY, tutorial_completed))
+	if prop_system != null:
+		prop_system.set_count(PropSystemScript.PROP_HINT, int(config.get_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_HINT, prop_system.count(PropSystemScript.PROP_HINT))))
+		prop_system.set_count(PropSystemScript.PROP_UNDO, int(config.get_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_UNDO, prop_system.count(PropSystemScript.PROP_UNDO))))
 
 
 ## 保存当前音频开关，下次启动自动恢复。
@@ -2605,6 +2851,9 @@ func _save_user_settings() -> void:
 	config.set_value(USER_SETTINGS_SECTION, "music_enabled", music_enabled)
 	config.set_value(USER_SETTINGS_SECTION, "sfx_enabled", sfx_enabled)
 	config.set_value(TutorialControllerScript.SETTINGS_SECTION, TutorialControllerScript.SETTINGS_COMPLETED_KEY, tutorial_completed)
+	if prop_system != null:
+		config.set_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_HINT, prop_system.count(PropSystemScript.PROP_HINT))
+		config.set_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_UNDO, prop_system.count(PropSystemScript.PROP_UNDO))
 	config.save(user_settings_path)
 
 
@@ -2666,6 +2915,7 @@ func _clear_transient_interaction_state(clear_transition := true) -> void:
 	pending_absorb_slot = -1
 	completing_category_slot = -1
 	completing_category_name = ""
+	pending_rewarded_placement = ""
 
 
 ## 在正式动作改变局面之前记录撤回快照。
@@ -3019,6 +3269,23 @@ func _check_end_state() -> void:
 	if not _has_any_available_step():
 		game_over = true
 		status_text = "无法移动"
+
+
+## 当前是否处于广告播放/等待回调状态。
+func _ad_is_showing() -> bool:
+	return pending_rewarded_placement != ""
+
+
+## 步数用完弹窗是否显示广告加步数入口。
+func _should_offer_extra_steps_ad() -> bool:
+	return game_over \
+		and status_text == "步数用完" \
+		and not extra_steps_ad_used
+
+
+## 步数用完后请求激励广告；成功回调后本局只奖励一次 +20 步。
+func _on_extra_steps_ad_pressed() -> void:
+	_request_rewarded_ad(AdServiceScript.PLACEMENT_EXTRA_STEPS)
 
 
 ## 暂存一次教学动作成功，等待正式动画和扣步流程完成后再推进步骤。

@@ -28,3 +28,10 @@
 - Category library content was audited for standalone card clarity: vague labels such as `单位/办公/园艺` were renamed, mixed-boundary terms such as `茶杯/印泥/手表/单车` were replaced with clearer words, and rule docs now use `古典小说` as the example category.
 - Category selection now uses fixed per-round word-count slots: generate balanced 3-8 slots first, then choose categories that can satisfy each slot. Short source categories do not downgrade longer slots.
 - Source library currently has 200+ categories. Source categories no longer need to reach 10 words; tests enforce 3+ clear candidates, valid conflict groups, safe 3-8 round sampling, and duplicate words only when every duplicate-owning category pair shares a direct conflict group.
+- Rewarded ads are routed through `scripts/ads/ad_service.gd`; main gameplay never calls a real ad SDK directly. The current provider is `scripts/ads/debug_ad_provider.gd`, which supports `ad_bypass` export feature and an editor-only cheat.
+- Editor rewarded-ad bypass toggles with `上上下下左右左右BABA`; it is runtime-only and is not written to `settings.cfg`.
+- Hint and undo counts are now permanent inventory stored in `user://settings.cfg` under the `props` section. New rounds reset undo history/current hints but do not reset inventory.
+- If hint/undo inventory is 0 but the requested action is otherwise valid, the prop button remains clickable with an ad badge. A successful rewarded ad adds 1 inventory and immediately consumes it to perform the requested hint/undo action. These prop ad uses are unlimited.
+- Step-out rewarded ads are limited per round: when `status_text == "步数用完"` and the round has not successfully used the reward, the overlay shows “增加步数”; successful reward adds 20 steps and resumes the current round.
+- Reward/failure handling follows SDK-style semantics: only `rewarded_ad_completed` grants rewards; failure or dismissal paths restore UI without granting inventory or steps.
+- New smoke coverage for this area: `test/prop_ad_smoke.gd`, `test/extra_steps_ad_smoke.gd`, `test/ad_cheat_smoke.gd`, and `test/prop_inventory_persistence_smoke.gd`.

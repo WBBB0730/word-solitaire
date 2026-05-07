@@ -25,13 +25,18 @@
 │   ├── fonts/
 │   │   ├── SourceHanSansSC-Medium.otf # Web/桌面/移动端统一中文 UI 字体
 │   │   └── SourceHanSans-OFL-1.1.txt # 思源黑体字体授权文件
-│   └── audio/
-│       ├── background_music.mp3      # 全局背景音乐
-│       ├── background_music.mp3.import
-│       ├── button_click.mp3          # 普通按钮点击音效
-│       ├── button_click.mp3.import
-│       ├── card_flip.wav             # 翻牌/洗牌音效
-│       └── card_flip.wav.import
+│   ├── audio/
+│   │   ├── background_music.mp3      # 全局背景音乐
+│   │   ├── background_music.mp3.import
+│   │   ├── button_click.mp3          # 普通按钮点击音效
+│   │   ├── button_click.mp3.import
+│   │   ├── card_flip.wav             # 翻牌/洗牌音效
+│   │   └── card_flip.wav.import
+│   └── props/
+│       ├── prop_hint.png             # GPT Image 生成并处理透明背景后的提示按钮资源
+│       ├── prop_hint.png.import
+│       ├── prop_undo.png             # GPT Image 生成并处理透明背景后的撤回按钮资源
+│       └── prop_undo.png.import
 ├── scenes/
 │   └── main.tscn                     # 主游戏场景，根节点挂载 scripts/main.gd
 ├── scripts/
@@ -41,6 +46,7 @@
 │   ├── category_selector.gd          # 每局类别抽样、长度限制、混淆 token 过滤
 │   ├── deal_solver.gd                # 随机 DFS 求解器和步数估算
 │   ├── game_audio.gd                 # BGM/SFX 播放器与音量模型
+│   ├── prop_system.gd                # 局内提示/撤回道具、撤回快照和提示搜索
 │   ├── tutorial_controller.gd         # 固定新手教学、动作白名单和完成状态
 │   └── tutorial_overlay.gd            # 新手教学高亮和手势动画
 ├── test/
@@ -60,6 +66,7 @@
 - `scripts/category_selector.gd`：纯规则 helper。它不接触节点树，负责生成本局 3-8 词数槽位、选择类别、抽样词语并过滤冲突。
 - `scripts/deal_solver.gd`：纯求解 helper。它读取当前牌局状态，转换成紧凑 id 状态后进行 DFS。
 - `scripts/game_audio.gd`：音频 helper。它创建 `AudioStreamPlayer` 节点并挂回主场景。
+- `scripts/prop_system.gd`：道具 helper。它管理每局固定道具次数、撤回快照和下一步提示搜索；主场景只负责渲染按钮并复用教程遮罩。
 - `scripts/tutorial_controller.gd`：新手教学 helper。它维护固定教学关、步骤推进、动作白名单和 `tutorial_completed` 持久化；主场景只负责渲染引导并复用正式移动规则。
 - `scripts/tutorial_overlay.gd`：新手教学表现 helper。它把教学步骤的抽象引用转换成当前布局的高亮框和手势动画。
 
@@ -70,7 +77,7 @@
 - 牌堆/洗牌动画：`deck_*_smoke.gd`、`draw_*_smoke.gd`、`wash_*_smoke.gd`、`repeated_draw_smoke.gd`
 - 拖拽/移动：`drag_*_smoke.gd`、`drop_no_replay_smoke.gd`、`board_drop_extended_hitbox_smoke.gd`
 - 3 区吸收/完成：`category_*_smoke.gd`、`complete_group_category_pulse_smoke.gd`、`board_absorb_reveal_sync_smoke.gd`
-- UI/音频/菜单/教学：`audio_smoke.gd`、`button_click_sfx_scope_smoke.gd`、`board_empty_slot_smoke.gd`、`start_menu_smoke.gd`、`settings_menu_smoke.gd`、`top_controls_smoke.gd`、`no_hover_smoke.gd`、`tutorial_smoke.gd`
+- UI/音频/菜单/教学/道具：`audio_smoke.gd`、`button_click_sfx_scope_smoke.gd`、`board_empty_slot_smoke.gd`、`start_menu_smoke.gd`、`settings_menu_smoke.gd`、`top_controls_smoke.gd`、`no_hover_smoke.gd`、`tutorial_smoke.gd`、`prop_system_smoke.gd`
 
 ## 生成和本地文件
 

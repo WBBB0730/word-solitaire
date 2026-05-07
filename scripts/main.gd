@@ -8,8 +8,11 @@ const CategorySelectorScript := preload("res://scripts/category_selector.gd")
 const CategoryLibraryScript := preload("res://scripts/category_library.gd")
 const DealSolverScript := preload("res://scripts/deal_solver.gd")
 const GameAudioScript := preload("res://scripts/game_audio.gd")
+const PropSystemScript := preload("res://scripts/prop_system.gd")
 const TutorialControllerScript := preload("res://scripts/tutorial_controller.gd")
 const TutorialOverlayScript := preload("res://scripts/tutorial_overlay.gd")
+const PropHintTexture := preload("res://assets/props/prop_hint.png")
+const PropUndoTexture := preload("res://assets/props/prop_undo.png")
 
 const GAME_W := 720.0
 const GAME_H := 1280.0
@@ -29,6 +32,12 @@ const TOP_BUTTON_W := 96.0
 const TOP_BUTTON_H := 52.0
 const TOP_BUTTON_GAP := 14.0
 const STEPS_LABEL_Y := 88.0
+const PROP_BUTTON_W := 86.0
+const PROP_BUTTON_H := 86.0
+const PROP_BUTTON_GAP := 42.0
+const PROP_BUTTON_Y := 1128.0
+const PROP_BADGE_SIZE := 36.0
+const PROP_DISABLED_COLOR := Color("#d6c990")
 const SETTINGS_PANEL_W := 480.0
 const SETTINGS_PANEL_H := 480.0
 const SETTINGS_ACTION_W := 300.0
@@ -145,6 +154,8 @@ var round_transition_tween: Tween
 var pending_round_message := ""
 ## 音频辅助对象。下面的公开音频字段会同步它，方便测试和调试。
 var audio_manager: RefCounted
+## 局内道具辅助对象。当前只管理每局固定次数，后续可替换为永久库存。
+var prop_system: RefCounted
 ## 新手教学控制器。固定教学关、步骤白名单和完成状态保存在独立脚本中。
 var tutorial_controller: RefCounted
 ## 新手教学视觉层。负责手势和高亮，不参与规则判断。
@@ -191,6 +202,7 @@ func _ready() -> void:
 	_bind_viewport_resize_signal()
 	_load_user_settings()
 	_init_audio()
+	_init_props()
 	_init_tutorial()
 	randomize()
 	_init_level()
@@ -233,6 +245,12 @@ func _init_audio() -> void:
 		audio_manager = GameAudioScript.new(self)
 	audio_manager.init_audio()
 	_sync_audio_enabled_state()
+
+
+## 初始化局内道具系统。
+func _init_props() -> void:
+	if prop_system == null:
+		prop_system = PropSystemScript.new(self)
 
 
 ## 初始化新手教学控制器。
@@ -707,6 +725,7 @@ func _render() -> void:
 	_render_deck_area()
 	_render_category_area()
 	_render_board_area(next_card_positions)
+	_render_prop_area()
 
 	if game_over:
 		_render_overlay()
@@ -714,6 +733,8 @@ func _render() -> void:
 		_render_settings_menu()
 	if _tutorial_active():
 		_render_tutorial_guidance()
+	elif prop_system != null and not prop_system.hint_guidance().is_empty():
+		_render_prop_hint_guidance()
 
 	previous_card_positions = next_card_positions
 
@@ -881,7 +902,7 @@ func _make_settings_button(text: String, pos: Vector2, meta_name: String) -> But
 	btn.size = Vector2(SETTINGS_ACTION_W, SETTINGS_ACTION_H)
 	btn.text = text
 	btn.z_index = 212
-	btn.add_theme_font_size_override("font_size", _ui_font(16))
+	btn.add_theme_font_size_override("font_size", _ui_font(14))
 	btn.add_theme_color_override("font_color", Color("#443b32"))
 	btn.add_theme_color_override("font_hover_color", Color("#443b32"))
 	btn.add_theme_color_override("font_pressed_color", Color("#443b32"))
@@ -1143,10 +1164,95 @@ func _render_start_menu() -> void:
 	add_child(tutorial)
 
 
+## 渲染局内道具按钮。完成新手教学后才显示，当前每局固定次数。
+func _render_prop_area() -> void:
+	if prop_system == null or not prop_system.should_show():
+		return
+	var total_width := PROP_BUTTON_W * 2.0 + PROP_BUTTON_GAP
+	var start_x := _play_area_origin().x + (GAME_W - total_width) * 0.5
+	var y := _layout_y(PROP_BUTTON_Y)
+	var hint := _make_prop_button(
+		"hint",
+		Vector2(start_x, y),
+		"hint_prop_button",
+		prop_system.can_use_hint(),
+		prop_system.count(PropSystemScript.PROP_HINT)
+	)
+	hint.pressed.connect(_on_hint_prop_pressed)
+	add_child(hint)
+
+	var undo := _make_prop_button(
+		"undo",
+		Vector2(start_x + PROP_BUTTON_W + PROP_BUTTON_GAP, y),
+		"undo_prop_button",
+		prop_system.can_use_undo(),
+		prop_system.count(PropSystemScript.PROP_UNDO)
+	)
+	undo.pressed.connect(_on_undo_prop_pressed)
+	add_child(undo)
+
+
+## 创建局内道具按钮，并复用普通按钮的按压动效和音效。
+func _make_prop_button(icon_name: String, pos: Vector2, meta_name: String, enabled: bool, count: int) -> Button:
+	var btn := Button.new()
+	btn.set_meta(meta_name, true)
+	btn.position = pos
+	btn.size = Vector2(PROP_BUTTON_W, PROP_BUTTON_H)
+	btn.text = ""
+	btn.disabled = not enabled
+	btn.add_theme_color_override("font_color", Color("#443b32"))
+	btn.add_theme_color_override("font_hover_color", Color("#443b32"))
+	btn.add_theme_color_override("font_pressed_color", Color("#443b32"))
+	btn.add_theme_color_override("font_focus_color", Color("#443b32"))
+	btn.add_theme_color_override("font_disabled_color", Color("#766f67"))
+	_apply_button_style_states(btn, _style(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 18))
+	btn.z_index = 120
+	_add_prop_icon(btn, icon_name, enabled)
+	_add_prop_badge(btn, count, enabled)
+	_attach_button_press_feedback(btn)
+	return btn
+
+
+## 使用 GPT Image 生成并处理透明背景后的按钮资源。
+func _add_prop_icon(parent: Button, icon_name: String, enabled: bool) -> void:
+	var holder := TextureRect.new()
+	holder.set_meta("prop_button_icon", true)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.texture = PropUndoTexture if icon_name == "undo" else PropHintTexture
+	holder.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	holder.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	holder.size = parent.size
+	holder.position = Vector2.ZERO
+	holder.modulate = Color(1, 1, 1, 1) if enabled else Color(0.72, 0.70, 0.62, 1)
+	parent.add_child(holder)
+
+
+## 在道具按钮右上角绘制剩余数量角标，避免把数字拼进按钮主文案。
+func _add_prop_badge(parent: Button, count: int, enabled: bool) -> void:
+	var badge := Panel.new()
+	badge.set_meta("prop_count_badge", true)
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.size = Vector2(PROP_BADGE_SIZE, PROP_BADGE_SIZE)
+	badge.position = Vector2(parent.size.x - PROP_BADGE_SIZE * 0.70, -PROP_BADGE_SIZE * 0.36)
+	badge.z_index = parent.z_index + 1
+	var fill := Color("#e94242") if enabled else PROP_DISABLED_COLOR
+	badge.add_theme_stylebox_override("panel", _style(fill, Color.WHITE, 2, int(PROP_BADGE_SIZE * 0.5)))
+	parent.add_child(badge)
+	var label := _add_generated_label(badge, str(count), Vector2.ZERO, badge.size, _ui_font(13), Color.WHITE)
+	label.position = Vector2(0, -1)
+	label.add_theme_constant_override("line_spacing", 0)
+
+
 ## 渲染教学高亮和手势演示，不显示任何规则文案。
 func _render_tutorial_guidance() -> void:
 	if tutorial_overlay != null:
 		tutorial_overlay.render(tutorial_controller.guidance())
+
+
+## 道具提示复用教学遮罩/手势，但不接管输入。
+func _render_prop_hint_guidance() -> void:
+	if tutorial_overlay != null:
+		tutorial_overlay.render(prop_system.hint_guidance())
 
 
 ## 创建卡牌按钮节点；卡牌本身不使用悬停态。
@@ -1936,6 +2042,8 @@ func _handle_deck_pressed() -> void:
 		return
 	selected.clear()
 	if deck.size() > 0:
+		_record_undo_snapshot()
+		_clear_prop_hint()
 		_play_card_flip_sfx()
 		var card: Dictionary = deck.pop_back()
 		card["face_up"] = true
@@ -1950,6 +2058,8 @@ func _handle_deck_pressed() -> void:
 		_tutorial_action_succeeded({"action": "deck_draw"})
 		return
 	elif draw_stack.size() > 0:
+		_record_undo_snapshot()
+		_clear_prop_hint()
 		_play_card_flip_sfx()
 		if is_inside_tree():
 			deck_animation_busy = true
@@ -2061,22 +2171,28 @@ func _drop_selected_at(global_pos: Vector2) -> void:
 				if _tutorial_active() and not tutorial_controller.allows_drop_target(selected, target):
 					_cancel_drag_drop()
 					return
+				var snapshot_pushed := _record_undo_snapshot()
 				if _move_selected_to_active_category(category):
+					_clear_prop_hint()
 					_pending_tutorial_success({"action": "move_to_active_category"})
 					selected["absorb_target_position"] = Vector2(_column_x(i), _layout_y(CATEGORY_Y))
 					selected["absorb_target_slot"] = i
 					_after_successful_move()
 				else:
+					_discard_undo_snapshot(snapshot_pushed)
 					_cancel_drag_drop()
 			else:
 				var target := {"kind": "category_empty", "slot": i}
 				if _tutorial_active() and not tutorial_controller.allows_drop_target(selected, target):
 					_cancel_drag_drop()
 					return
+				var snapshot_pushed := _record_undo_snapshot()
 				if _move_selected_to_empty_category(i):
+					_clear_prop_hint()
 					_pending_tutorial_success({"action": "move_to_empty_category"})
 					_after_successful_move()
 				else:
+					_discard_undo_snapshot(snapshot_pushed)
 					_cancel_drag_drop()
 			return
 	for col_idx in range(BOARD_COLUMN_COUNT):
@@ -2085,10 +2201,13 @@ func _drop_selected_at(global_pos: Vector2) -> void:
 			if _tutorial_active() and not tutorial_controller.allows_drop_target(selected, target):
 				_cancel_drag_drop()
 				return
+			var snapshot_pushed := _record_undo_snapshot()
 			if _move_selected_to_column(col_idx):
+				_clear_prop_hint()
 				_pending_tutorial_success({"action": "move_to_column"})
 				_after_successful_move()
 			else:
+				_discard_undo_snapshot(snapshot_pushed)
 				_cancel_drag_drop()
 			return
 	_cancel_drag_drop()
@@ -2214,6 +2333,8 @@ func _setup_new_round(message: String) -> void:
 	game_over = false
 	menu_active = false
 	status_text = message
+	if prop_system != null:
+		prop_system.reset_round()
 	_init_level()
 	_render()
 
@@ -2379,6 +2500,7 @@ func _on_restart_pressed() -> void:
 ## 首页按钮回调。
 func _on_home_pressed() -> void:
 	_clear_transient_interaction_state()
+	_clear_prop_hint()
 	if tutorial_controller != null:
 		tutorial_controller.active = false
 	menu_active = true
@@ -2404,9 +2526,22 @@ func _on_tutorial_pressed() -> void:
 	_start_tutorial()
 
 
+## 点击提示道具：消耗一次并显示下一步可操作的教程式引导。
+func _on_hint_prop_pressed() -> void:
+	if prop_system != null:
+		prop_system.use_hint()
+
+
+## 点击撤回道具：恢复到上一个正式动作之前。
+func _on_undo_prop_pressed() -> void:
+	if prop_system != null:
+		prop_system.use_undo()
+
+
 ## 进入固定教学关。
 func _start_tutorial() -> void:
 	_clear_transient_interaction_state()
+	_clear_prop_hint()
 	settings_menu_open = false
 	game_over = false
 	menu_active = false
@@ -2531,6 +2666,27 @@ func _clear_transient_interaction_state(clear_transition := true) -> void:
 	pending_absorb_slot = -1
 	completing_category_slot = -1
 	completing_category_name = ""
+
+
+## 在正式动作改变局面之前记录撤回快照。
+func _record_undo_snapshot() -> bool:
+	if prop_system == null:
+		return false
+	var before_size: int = prop_system.undo_stack.size()
+	prop_system.push_undo_snapshot()
+	return prop_system.undo_stack.size() > before_size
+
+
+## 动作最终失败时，清理刚刚为它准备的撤回快照。
+func _discard_undo_snapshot(snapshot_pushed: bool) -> void:
+	if snapshot_pushed and prop_system != null:
+		prop_system.discard_latest_undo_snapshot()
+
+
+## 成功动作、跳转流程或重开前隐藏当前提示。
+func _clear_prop_hint() -> void:
+	if prop_system != null:
+		prop_system.clear_hint()
 
 
 ## 只有 1 区最上方的牌能成为可移动来源。

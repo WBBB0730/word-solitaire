@@ -125,6 +125,12 @@ var settings_menu_open := false
 var music_enabled := true
 ## 所有短音效是否启用。
 var sfx_enabled := true
+## 应用失焦、锁屏或切后台时临时暂停背景音乐。
+var music_paused_for_app_state := false
+## 激励广告展示期间临时暂停背景音乐。
+var music_paused_for_ad := false
+## 临时暂停前的背景音乐位置；如果平台中断播放器，恢复时从这里续播。
+var music_resume_position := 0.0
 ## 剩余步数。抽牌和洗牌都消耗一步。
 var steps_left := STARTING_STEPS
 ## 递增卡牌编号，用于动画追踪和求解器状态键。
@@ -229,6 +235,10 @@ func _ready() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		_request_layout_refresh()
+	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_APPLICATION_PAUSED:
+		_set_app_state_music_paused(true)
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN or what == NOTIFICATION_APPLICATION_RESUMED:
+		_set_app_state_music_paused(false)
 
 
 ## 处理全局拖拽过程中的移动和松手事件。
@@ -267,6 +277,7 @@ func _init_audio() -> void:
 func _init_ads() -> void:
 	if ad_service == null:
 		ad_service = AdServiceScript.new(self)
+		ad_service.rewarded_ad_started.connect(_on_rewarded_ad_started)
 		ad_service.rewarded_ad_completed.connect(_on_rewarded_ad_completed)
 		ad_service.rewarded_ad_failed.connect(_on_rewarded_ad_failed)
 
@@ -2731,6 +2742,12 @@ func _debug_complete_rewarded_ad(placement: String) -> void:
 		ad_service.complete_debug_rewarded_ad(placement)
 
 
+## 激励广告开始展示时暂停背景音乐，避免广告声和游戏音乐叠在一起。
+func _on_rewarded_ad_started(_placement: String) -> void:
+	music_paused_for_ad = true
+	_sync_audio_enabled_state()
+
+
 ## 请求激励广告，并在等待 SDK/Provider 回调时暂停局内输入。
 func _request_rewarded_ad(placement: String) -> bool:
 	if ad_service == null or pending_rewarded_placement != "":
@@ -2766,6 +2783,8 @@ func _rewarded_action_is_available(placement: String) -> bool:
 
 ## 激励广告完整看完后，根据广告位发放奖励。
 func _on_rewarded_ad_completed(placement: String) -> void:
+	music_paused_for_ad = false
+	_sync_audio_enabled_state()
 	if pending_rewarded_placement != placement:
 		return
 	if not _rewarded_action_is_available(placement):
@@ -2791,6 +2810,8 @@ func _on_rewarded_ad_completed(placement: String) -> void:
 
 ## 激励广告没有完成时恢复当前流程，不发放奖励。
 func _on_rewarded_ad_failed(placement: String, _reason: String) -> void:
+	music_paused_for_ad = false
+	_sync_audio_enabled_state()
 	if pending_rewarded_placement != placement:
 		return
 	pending_rewarded_placement = ""
@@ -2860,19 +2881,42 @@ func _new_prop_inventory_salt() -> String:
 	return "%d:%d" % [Time.get_ticks_usec(), randi()]
 
 
+## 记录应用生命周期导致的音乐暂停，并立即同步播放器状态。
+func _set_app_state_music_paused(paused: bool) -> void:
+	if music_paused_for_app_state == paused:
+		return
+	music_paused_for_app_state = paused
+	_sync_audio_enabled_state()
+
+
+func _music_runtime_paused() -> bool:
+	return music_paused_for_app_state or music_paused_for_ad
+
+
+func _capture_music_resume_position() -> void:
+	if is_instance_valid(music_player) and music_player.playing:
+		music_resume_position = music_player.get_playback_position()
+
+
 ## 根据当前开关状态同步实际音频播放器。
 func _sync_audio_enabled_state() -> void:
 	if is_instance_valid(music_player):
 		if music_enabled:
 			if music_player.is_inside_tree():
-				if not music_player.playing:
-					music_player.play()
-				music_player.stream_paused = false
+				if _music_runtime_paused():
+					if music_player.playing:
+						_capture_music_resume_position()
+						music_player.stream_paused = true
+				else:
+					if not music_player.playing:
+						music_player.play(music_resume_position)
+					music_player.stream_paused = false
 		else:
 			if music_player.is_inside_tree():
 				# Web 端被浏览器拦截的 play() 可能在首次点击后恢复；关闭时直接 stop。
 				music_player.stop()
 				music_player.stream_paused = false
+				music_resume_position = 0.0
 	for player in sfx_players:
 		if is_instance_valid(player) and not sfx_enabled:
 			player.stop()

@@ -14,6 +14,7 @@
 - Start menu visual verification screenshot: `screenshots/start_menu/frame00000001.png`.
 - Audio assets live under `assets/audio/`; `scripts/main.gd` creates persistent AudioStreamPlayer nodes for looping BGM and card-flip SFX.
 - Audio gains use a base-plus-trim model in `scripts/main.gd`: music base `-8.0 dB`; SFX base `-1.2 dB`; card flip trim `-1.4 dB`; button click trim `-0.6 dB`.
+- Background music pauses while an rewarded ad is showing and while the app is defocused, paused, locked, or backgrounded. It resumes only when all runtime pause reasons are cleared and the persisted music toggle is still on.
 - The in-game top-left controls are now a single “菜单” button. Its modal contains persisted music/SFX toggles, restart, home, and “继续游戏”; SFX toggle is special-cased so turning it off is silent and turning it on plays one confirmation click.
 - Starting or restarting a round uses a slightly darker green top/bottom curtain with a subtle 4px seam line plus faint highlight; it closes over the current screen, swaps the deal while covered, holds briefly, then opens. It clears `previous_card_positions` before rendering the new deal to prevent stale card-id movement.
 - Empty category slots in area 3 use a balanced soft-yellow translucent fill with a brighter yellow dashed outline and no plus sign, so they read as category-card drop slots rather than buttons.

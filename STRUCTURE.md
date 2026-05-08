@@ -74,6 +74,7 @@
   - Creates looping BGM and pooled SFX players.
   - Applies base-plus-trim volume balancing.
   - Respects the music/SFX toggles persisted by `main.gd`.
+  - Lets `main.gd` temporarily pause BGM during ads and app background/focus-loss states without changing the persisted music setting.
   - Mirrors public audio fields back to `main.gd` for smoke tests and diagnostics.
 
 ### PropSystem

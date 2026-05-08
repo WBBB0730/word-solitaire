@@ -41,6 +41,7 @@
 - `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script test/editor_ad_bypass_smoke.gd`
 - `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script test/prop_inventory_persistence_smoke.gd`
 - `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script test/prop_system_smoke.gd`
+- `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script test/audio_smoke.gd`
 - `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script test/web_ad_shell_smoke.gd`
 - Browser verification at `http://localhost:5174/`: hint prop ad opened Google “Rewarded ad example” directly without the custom “观看广告” prompt; after the rewarded countdown and close action, console logged `adViewed` and `rewarded completed` with the matching one-shot request id.
 - `/Applications/Godot.app/Contents/MacOS/Godot --headless --path . --script test/available_step_end_state_smoke.gd`

@@ -79,6 +79,49 @@ func _process(_delta: float) -> bool:
 		push_error("Audio smoke failed: re-enabled music did not start")
 		quit(1)
 		return false
+	scene._on_rewarded_ad_started("prop_hint")
+	if not scene.music_player.stream_paused:
+		push_error("Audio smoke failed: rewarded ad did not pause music")
+		quit(1)
+		return false
+	scene.music_player.stop()
+	scene._on_rewarded_ad_failed("prop_hint", "dismissed")
+	if scene.music_player.stream_paused:
+		push_error("Audio smoke failed: music did not resume after rewarded ad")
+		quit(1)
+		return false
+	if not scene.music_player.playing or abs(scene.music_player.get_playback_position() - scene.music_resume_position) > 0.25:
+		push_error("Audio smoke failed: interrupted ad pause did not resume near the saved music position")
+		quit(1)
+		return false
+	scene._set_app_state_music_paused(true)
+	if not scene.music_player.stream_paused:
+		push_error("Audio smoke failed: app background/focus loss did not pause music")
+		quit(1)
+		return false
+	scene._on_rewarded_ad_started("prop_hint")
+	scene._on_rewarded_ad_failed("prop_hint", "dismissed")
+	if not scene.music_player.stream_paused:
+		push_error("Audio smoke failed: ending ad should not resume while app is still backgrounded")
+		quit(1)
+		return false
+	scene.music_enabled = false
+	scene._sync_audio_enabled_state()
+	if scene.music_player.playing or scene.music_player.stream_paused:
+		push_error("Audio smoke failed: disabled music should stop even while app is backgrounded")
+		quit(1)
+		return false
+	scene.music_enabled = true
+	scene._sync_audio_enabled_state()
+	if scene.music_player.playing:
+		push_error("Audio smoke failed: music should not start while app is backgrounded")
+		quit(1)
+		return false
+	scene._set_app_state_music_paused(false)
+	if not scene.music_player.playing or scene.music_player.stream_paused:
+		push_error("Audio smoke failed: music did not resume after app foreground/focus return")
+		quit(1)
+		return false
 	if _stream_has_loop(scene.music_player.stream) and not bool(scene.music_player.stream.get("loop")):
 		push_error("Audio smoke failed: music stream is not set to loop")
 		quit(1)

@@ -64,6 +64,65 @@
 				transition: width 120ms ease;
 			}
 
+			.h5-ad-overlay {
+				position: fixed;
+				inset: 0;
+				z-index: 9999;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				background: rgba(21, 21, 21, 0.45);
+				font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			}
+
+			.h5-ad-card {
+				box-sizing: border-box;
+				width: min(360px, calc(100vw - 48px));
+				padding: 28px 28px 24px;
+				border: 5px solid #151515;
+				border-radius: 22px;
+				background: #fff4cf;
+				color: #352f2b;
+				text-align: center;
+				box-shadow: 0 18px 0 rgba(0, 0, 0, 0.16);
+			}
+
+			.h5-ad-title {
+				margin: 0 0 16px;
+				font-size: 28px;
+				font-weight: 800;
+			}
+
+			.h5-ad-body {
+				margin: 0 0 22px;
+				font-size: 18px;
+				font-weight: 700;
+				line-height: 1.5;
+			}
+
+			.h5-ad-actions {
+				display: flex;
+				gap: 12px;
+				justify-content: center;
+			}
+
+			.h5-ad-button {
+				min-width: 112px;
+				height: 48px;
+				border: 4px solid #151515;
+				border-radius: 12px;
+				background: #ffe08a;
+				color: #352f2b;
+				font-size: 18px;
+				font-weight: 800;
+				cursor: pointer;
+			}
+
+			.h5-ad-button:disabled {
+				opacity: 0.55;
+				cursor: default;
+			}
+
 			@keyframes loader-pop-out {
 				0% {
 					opacity: 1;
@@ -94,6 +153,273 @@
 				}
 			}
 		</style>
+		<script>
+			window.WordSolitaireH5AdsConfig = {
+				adClient: "ca-pub-123456789",
+				testMode: true,
+				testFallback: false,
+				testAdSeconds: 3,
+				debugLogs: true,
+				preloadAdBreaks: "on",
+				frequencyHint: "30s",
+			};
+		</script>
+		<script>
+			(() => {
+				const config = window.WordSolitaireH5AdsConfig || {};
+				const adClient = config.adClient || "ca-pub-123456789";
+				window.WordSolitaireH5AdsState = {
+					loaded: false,
+					ready: false,
+					failed: false,
+				};
+				const adsScript = document.createElement("script");
+				adsScript.async = true;
+				adsScript.crossOrigin = "anonymous";
+				adsScript.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(adClient)}`;
+				adsScript.setAttribute("data-ad-client", adClient);
+				if (config.testMode !== false) {
+					adsScript.setAttribute("data-adbreak-test", "on");
+				}
+				if (config.frequencyHint) {
+					adsScript.setAttribute("data-ad-frequency-hint", config.frequencyHint);
+				}
+				const log = (...args) => {
+					if (config.debugLogs !== false) {
+						console.log("[WordSolitaireAds]", ...args);
+					}
+				};
+				adsScript.onload = () => {
+					window.WordSolitaireH5AdsState.loaded = true;
+					log("Google H5 Ad Placement script loaded");
+				};
+				adsScript.onerror = () => {
+					window.WordSolitaireH5AdsState.failed = true;
+					log("Google H5 Ad Placement script failed to load");
+				};
+				document.head.appendChild(adsScript);
+
+				window.adsbygoogle = window.adsbygoogle || [];
+				window.adBreak = window.adBreak || function(options) {
+					window.adsbygoogle.push(options);
+				};
+				window.adConfig = window.adConfig || function(options) {
+					window.adsbygoogle.push(options);
+				};
+				window.adConfig({
+					preloadAdBreaks: config.preloadAdBreaks || "on",
+					sound: "on",
+					onReady: () => {
+						window.WordSolitaireH5AdsState.ready = true;
+						log("Google H5 Ad Placement ready");
+					},
+				});
+			})();
+		</script>
+		<script>
+			window.WordSolitaireWebAds = (() => {
+				let pendingPlacement = "";
+				let pendingRequestId = "";
+				let startedPlacement = "";
+
+				const config = () => window.WordSolitaireH5AdsConfig || {};
+				const log = (...args) => {
+					if (config().debugLogs !== false) {
+						console.log("[WordSolitaireAds]", ...args);
+					}
+				};
+				const testModeEnabled = () => config().testMode !== false;
+				const testFallbackEnabled = () => testModeEnabled() && config().testFallback !== false;
+				const errorMessage = (error) => {
+					if (!error) {
+						return "web ad unavailable";
+					}
+					if (typeof error === "string") {
+						return error;
+					}
+					return error.message || error.code || JSON.stringify(error);
+				};
+				const googleAvailable = () => {
+					const state = window.WordSolitaireH5AdsState || {};
+					return state.loaded === true && state.ready === true && state.failed !== true && typeof window.adBreak === "function" && typeof window.adConfig === "function";
+				};
+				const isAvailable = () => googleAvailable() || testFallbackEnabled();
+				const finish = (placement, requestId, onFinished) => {
+					if (pendingPlacement !== placement || pendingRequestId !== requestId) {
+						return;
+					}
+					log("rewarded completed", placement, requestId);
+					pendingPlacement = "";
+					pendingRequestId = "";
+					startedPlacement = "";
+					if (onFinished) {
+						onFinished(placement, requestId);
+					}
+				};
+				const fail = (placement, requestId, reason, onError) => {
+					if (pendingPlacement !== placement || pendingRequestId !== requestId) {
+						return;
+					}
+					log("rewarded failed", placement, requestId, reason);
+					pendingPlacement = "";
+					pendingRequestId = "";
+					startedPlacement = "";
+					if (onError) {
+						onError(placement, requestId, reason);
+					}
+				};
+				const showLocalTestAd = (placement, requestId, onStarted, onFinished, onError, reason) => {
+					if (!testFallbackEnabled()) {
+						fail(placement, requestId, reason || "Google H5 rewarded ad unavailable", onError);
+						return;
+					}
+					if (onStarted) {
+						onStarted(placement, requestId);
+					}
+					log("show local test ad", placement, requestId, reason || "");
+					const seconds = Math.max(1, Math.floor(Number(config().testAdSeconds || 3)));
+					let remaining = seconds;
+					const overlay = document.createElement("div");
+					overlay.className = "h5-ad-overlay";
+					overlay.innerHTML = `
+						<div class="h5-ad-card" role="dialog" aria-modal="true" aria-label="测试广告">
+							<h2 class="h5-ad-title">测试广告</h2>
+							<p class="h5-ad-body">开发环境模拟广告播放中<br><span data-countdown>${remaining}</span> 秒后可领取奖励</p>
+							<div class="h5-ad-actions">
+								<button class="h5-ad-button" data-dismiss>跳过</button>
+								<button class="h5-ad-button" data-reward disabled>领取奖励</button>
+							</div>
+						</div>
+					`;
+					document.body.appendChild(overlay);
+					const countdown = overlay.querySelector("[data-countdown]");
+					const rewardButton = overlay.querySelector("[data-reward]");
+					const dismissButton = overlay.querySelector("[data-dismiss]");
+					const cleanup = () => {
+						window.clearInterval(timer);
+						overlay.remove();
+					};
+					const timer = window.setInterval(() => {
+						remaining -= 1;
+						countdown.textContent = String(Math.max(remaining, 0));
+						if (remaining <= 0) {
+							window.clearInterval(timer);
+							rewardButton.disabled = false;
+							rewardButton.textContent = "领取奖励";
+						}
+					}, 1000);
+					rewardButton.addEventListener("click", () => {
+						if (rewardButton.disabled) {
+							return;
+						}
+						cleanup();
+						finish(placement, requestId, onFinished);
+					});
+					dismissButton.addEventListener("click", () => {
+						cleanup();
+						fail(placement, requestId, "local test ad dismissed", onError);
+					});
+				};
+
+				const bridge = {
+					isAvailable,
+					requestRewarded: (placement, requestId, onStarted, onFinished, onError) => {
+						if (typeof requestId !== "string" || requestId.length < 8) {
+							if (onError) {
+								onError(placement, "", "invalid rewarded ad request");
+							}
+							return;
+						}
+						log("request rewarded", placement, requestId, {
+							googleAvailable: googleAvailable(),
+							testFallback: testFallbackEnabled(),
+						});
+						if (!googleAvailable()) {
+							if (testFallbackEnabled()) {
+								pendingPlacement = placement;
+								pendingRequestId = requestId;
+								startedPlacement = "";
+								showLocalTestAd(placement, requestId, onStarted, onFinished, onError, "Google H5 Ad Placement API unavailable");
+								return;
+							}
+							if (onError) {
+								onError(placement, requestId, "Google H5 Ad Placement API unavailable");
+							}
+							return;
+						}
+						if (pendingPlacement !== "") {
+							if (onError) {
+								onError(placement, requestId, "another rewarded ad is pending");
+							}
+							return;
+						}
+						pendingPlacement = placement;
+						pendingRequestId = requestId;
+						startedPlacement = "";
+						try {
+							window.adConfig({ sound: "on" });
+							window.adBreak({
+								type: "reward",
+								name: placement,
+								beforeReward: (showAdFn) => {
+									log("beforeReward", placement, typeof showAdFn);
+									if (typeof showAdFn === "function") {
+										try {
+											showAdFn();
+										} catch (error) {
+											fail(placement, requestId, errorMessage(error), onError);
+										}
+									} else {
+										fail(placement, requestId, "rewarded show function unavailable", onError);
+									}
+								},
+								beforeAd: () => {
+									log("beforeAd", placement);
+									startedPlacement = placement;
+									if (onStarted) {
+										onStarted(placement, requestId);
+									}
+								},
+								adViewed: () => {
+									log("adViewed", placement);
+									finish(placement, requestId, onFinished);
+								},
+								adDismissed: () => {
+									log("adDismissed", placement);
+									fail(placement, requestId, "rewarded ad dismissed", onError);
+								},
+								afterAd: () => {
+									log("afterAd", placement);
+								},
+								adBreakDone: (placementInfo) => {
+									const status = placementInfo && placementInfo.breakStatus;
+									log("adBreakDone", placement, placementInfo || {});
+									if (status === "viewed") {
+										finish(placement, requestId, onFinished);
+										return;
+									}
+									if (pendingPlacement === placement) {
+										const reason = status || (startedPlacement === placement ? "rewarded ad not completed" : "rewarded ad not shown");
+										if (testFallbackEnabled()) {
+											showLocalTestAd(placement, requestId, onStarted, onFinished, onError, reason);
+										} else {
+											fail(placement, requestId, reason, onError);
+										}
+									}
+								}
+							});
+						} catch (error) {
+							if (testFallbackEnabled()) {
+								showLocalTestAd(placement, requestId, onStarted, onFinished, onError, errorMessage(error));
+							} else {
+								fail(placement, requestId, errorMessage(error), onError);
+							}
+						}
+					},
+				};
+				return Object.freeze(bridge);
+			})();
+		</script>
 	</head>
 	<body>
 		<canvas id="canvas"></canvas>

@@ -38,14 +38,14 @@ func _check_visibility_and_hint() -> void:
 	_assert(hint_button != null and undo_button != null, "props show after tutorial completion")
 	_assert(hint_button.text == "" and undo_button.text == "", "prop buttons do not use text")
 	_assert(_find_node_with_meta(hint_button, "prop_button_icon") != null and _find_node_with_meta(undo_button, "prop_button_icon") != null, "prop buttons render icons")
-	_assert(_badge_text(hint_button) == "3" and _badge_text(undo_button) == "3", "prop counts render as badges")
+	_assert(_badge_text(hint_button) == "1" and _badge_text(undo_button) == "1", "prop counts render as badges")
 	_assert(not hint_button.disabled, "hint is enabled when a legal move exists")
 	_assert(undo_button.disabled, "undo is disabled before any action")
 
 	scene._on_hint_prop_pressed()
-	_assert(scene.prop_system.count("hint") == 2, "hint consumes one count")
+	_assert(scene.prop_system.count("hint") == 0, "hint consumes one count")
 	var updated_hint_button := _find_button_with_meta(scene, "hint_prop_button")
-	_assert(updated_hint_button != null and _badge_text(updated_hint_button) == "2", "hint badge updates after use")
+	_assert(updated_hint_button != null and _find_node_with_meta(updated_hint_button, "prop_ad_badge") != null, "hint badge changes to ad entry after use")
 	var guidance: Dictionary = scene.prop_system.hint_guidance()
 	_assert(String(guidance.get("gesture", "")) == "drag", "hint uses drag guidance")
 	_assert(String(guidance.get("source", {}).get("kind", "")) == "draw_top", "hint points at draw top")
@@ -53,7 +53,7 @@ func _check_visibility_and_hint() -> void:
 	_assert(_find_node_with_meta(scene, "tutorial_mask") != null, "hint reuses tutorial mask")
 	_assert(not scene.prop_system.can_use_hint(), "hint is disabled while current hint is visible")
 	scene._on_hint_prop_pressed()
-	_assert(scene.prop_system.count("hint") == 2, "second hint press before an action does not consume count")
+	_assert(scene.prop_system.count("hint") == 0, "second hint press before an action does not consume count")
 
 
 func _check_undo() -> void:
@@ -68,8 +68,9 @@ func _check_undo() -> void:
 	scene._on_undo_prop_pressed()
 	_assert(scene.deck.size() == 1 and scene.draw_stack.is_empty(), "undo restores deck and draw stack")
 	_assert(scene.steps_left == 10, "undo restores step count")
-	_assert(scene.prop_system.count("undo") == 2, "undo consumes one count")
+	_assert(scene.prop_system.count("undo") == 0, "undo consumes one count")
 
+	scene.prop_system.set_count("undo", 1)
 	_prepare_simple_state(true)
 	scene.selected = scene._selection_for_draw(scene.draw_stack.size() - 1)
 	scene.drag_preview = Control.new()

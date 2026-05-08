@@ -8,8 +8,8 @@ extends RefCounted
 const PROP_HINT := "hint"
 const PROP_UNDO := "undo"
 const DEFAULT_INVENTORY := {
-	PROP_HINT: 3,
-	PROP_UNDO: 3,
+	PROP_HINT: 1,
+	PROP_UNDO: 1,
 }
 const MAX_UNDO_HISTORY := 32
 

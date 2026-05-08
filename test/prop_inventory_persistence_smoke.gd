@@ -20,10 +20,28 @@ func _initialize() -> void:
 	second._ready()
 	_assert(second.prop_system.count(second.PropSystemScript.PROP_HINT) == 7, "hint inventory is persisted")
 	_assert(second.prop_system.count(second.PropSystemScript.PROP_UNDO) == 8, "undo inventory is persisted")
+	second.queue_free()
+
+	_write_tampered_inventory()
+	var third: Node = load("res://scenes/main.tscn").instantiate()
+	third.user_settings_path = TEMP_SETTINGS_PATH
+	root.add_child(third)
+	third._ready()
+	_assert(third.prop_system.count(third.PropSystemScript.PROP_HINT) == 1, "tampered hint inventory falls back to default")
+	_assert(third.prop_system.count(third.PropSystemScript.PROP_UNDO) == 1, "tampered undo inventory falls back to default")
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(TEMP_SETTINGS_PATH))
 	print("PROP_INVENTORY_PERSISTENCE_SMOKE_PASS")
 	quit(0)
+
+
+func _write_tampered_inventory() -> void:
+	var config := ConfigFile.new()
+	config.set_value("props", "hint", 99)
+	config.set_value("props", "undo", 99)
+	config.set_value("props", "salt", "edited")
+	config.set_value("props", "checksum", "edited")
+	config.save(TEMP_SETTINGS_PATH)
 
 
 func _assert(condition: bool, label: String) -> void:

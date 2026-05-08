@@ -33,7 +33,6 @@
   - Reveals covered cards in area 4 after lower cards move away.
   - Tracks remaining steps and win/fail states.
   - Renders hint/undo prop buttons, ad badges, and the step-out “增加步数” rewarded-ad action.
-  - Listens for the editor-only ad bypass cheat sequence.
   - Delegates category selection, solving, audio playback, ad routing, and prop inventory logic to helper scripts.
 
 ### CategoryLibrary
@@ -96,7 +95,34 @@
   - Provides the single rewarded-ad entrypoint used by `main.gd`.
   - Emits reward/failure signals instead of mutating game state directly.
   - Routes debug/editor bypass requests to `DebugAdProvider`.
-  - Leaves the real SDK provider seam ready for a future AdMob adapter.
+  - Routes Web exports to `WebAdProvider` when the custom HTML shell exposes the JS bridge.
+  - Routes Android/iOS runtime requests to `AdmobProvider` when the native singleton is available.
+
+### WebAdProvider
+
+- **File:** `res://scripts/ads/web_ad_provider.gd`
+- **Extends:** `RefCounted`
+- **Responsibilities:**
+  - Calls the `WordSolitaireWebAds` bridge injected by `web/shell.html`.
+  - Uses Google H5 Ad Placement API rewarded placements for Vercel/self-hosted Web exports.
+  - Requests `preloadAdBreaks: "on"` before the first ad break and reports availability only after Google `onReady`.
+  - Sends a one-shot `requestId` with each rewarded request and ignores callback ids that do not match the current pending request.
+  - Calls Google-provided `showAdFn()` directly from the rewarded flow so the prop button opens the official mock ad without an extra custom prompt.
+  - Keeps the old local test-ad overlay as an explicit fallback path, but it is disabled by default so it does not mask Google mock-ad failures.
+  - Freezes the public JS bridge object after initialization, leaving only the minimal request/availability API exposed.
+  - Grants rewards only after the JS bridge reports a viewed rewarded ad.
+  - Keeps desktop and editor runs quiet by only touching `JavaScriptBridge` on Web exports.
+
+### AdmobProvider
+
+- **File:** `res://scripts/ads/admob_provider.gd`
+- **Extends:** `RefCounted`
+- **Responsibilities:**
+  - Dynamically creates the plugin `Admob` node only on Android/iOS when `AdmobPlugin` singleton exists.
+  - Initializes the Google Mobile Ads SDK through the Godot AdMob plugin.
+  - Preloads rewarded ads and shows them for hint, undo, and extra-step placements.
+  - Grants rewards only after the SDK emits `rewarded_ad_user_earned_reward`, then waits for dismissal before resuming gameplay input.
+  - Reads AdMob app/ad-unit IDs from the `admob/*` project settings; current defaults are Google test IDs.
 
 ### DebugAdProvider
 
@@ -104,7 +130,7 @@
 - **Extends:** `RefCounted`
 - **Responsibilities:**
   - Simulates rewarded-ad success when `ad_bypass` export feature is present.
-  - Simulates rewarded-ad success after the editor cheat toggles session bypass on.
+  - Simulates rewarded-ad success by default in Godot editor runs.
   - Keeps bypass state runtime-only; it is not persisted in user settings.
 
 ### AdResult
@@ -120,16 +146,20 @@
 - Drag starts after the pointer crosses the drag threshold.
 - Releasing over a legal category slot or board column performs the move.
 - Clicking/tapping the deck draws a card or washes the open pile back into the deck.
-- In Godot editor runs, `上上下下左右左右BABA` toggles rewarded-ad bypass for the current session.
+- In Godot editor runs, rewarded-ad bypass is enabled by default.
 
 ## Persistence
 
 - Audio toggles, tutorial completion, and permanent prop inventory are stored in `user://settings.cfg`.
 - Hint/undo inventory lives under the `props` section.
-- The ad bypass cheat is intentionally not persisted.
+- The editor ad bypass state is intentionally not persisted.
+- AdMob SDK IDs live in `project.godot` under `[admob]` and in `addons/AdmobPlugin/android_export.cfg` / `ios_export.cfg` for export-time App ID injection.
+- Web H5 ads are configured in `web/shell.html`; the first version uses Google test mode by default and needs a real H5 Ads client ID before production monetization.
 
 ## Assets
 
 - Audio assets live under `res://assets/audio`.
 - UI uses generated Godot controls, colors, and text.
-- The current ad UI uses generated play-triangle icons, not separate image assets.
+- Ad UI uses `res://assets/ui/ad_play.svg` for rewarded-ad badges and the extra-steps action.
+- The native AdMob plugin lives under `res://addons/AdmobPlugin`; iOS embedded SDK frameworks live under `res://ios/framework`.
+- Web export uses `res://web/shell.html` to load the Godot canvas, boot loader, and Google H5 rewarded-ad bridge in one document.

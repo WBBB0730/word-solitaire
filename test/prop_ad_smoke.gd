@@ -12,6 +12,7 @@ func _initialize() -> void:
 	scene.user_settings_path = TEMP_SETTINGS_PATH
 	root.add_child(scene)
 	scene._ready()
+	scene.ad_service.set_editor_bypass_enabled(false)
 	_prepare_hint_ad_state()
 
 
@@ -57,7 +58,11 @@ func _prepare_hint_ad_state() -> void:
 func _check_zero_inventory_ad_entry_without_provider() -> void:
 	var hint_button := _find_button_with_meta(scene, "hint_prop_button")
 	_assert(hint_button != null and not hint_button.disabled, "zero hint still shows clickable ad entry before provider is available")
-	_assert(_find_node_with_meta(hint_button, "prop_ad_badge") != null, "zero hint shows ad badge before provider is available")
+	var ad_badge := _find_node_with_meta(hint_button, "prop_ad_badge")
+	_assert(ad_badge != null, "zero hint shows ad badge before provider is available")
+	_assert(_canvas_z_total(ad_badge) < 260, "prop ad badge stays below round transition curtain")
+	var ad_icon := _find_node_with_meta(hint_button, "ad_play_icon")
+	_assert(ad_icon != null and _canvas_z_total(ad_icon) < 260, "prop ad icon stays below round transition curtain")
 	scene._on_hint_prop_pressed()
 	_assert(scene.prop_system.count(scene.PropSystemScript.PROP_HINT) == 0, "unavailable ad does not grant hint")
 	_assert(scene.prop_system.hint_guidance().is_empty(), "unavailable ad does not display hint")
@@ -147,6 +152,16 @@ func _find_node_with_meta(node: Node, meta_name: String) -> Node:
 		if nested != null:
 			return nested
 	return null
+
+
+func _canvas_z_total(node: Node) -> int:
+	var total := 0
+	var cursor := node
+	while cursor != null:
+		if cursor is CanvasItem:
+			total = int(cursor.z_index) + total if cursor.z_as_relative else int(cursor.z_index)
+		cursor = cursor.get_parent()
+	return total
 
 
 func _assert(condition: bool, label: String) -> void:

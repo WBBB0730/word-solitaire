@@ -1,7 +1,7 @@
 ## 广告服务入口。
 ##
-## 游戏主逻辑只调用这里，不直接依赖具体广告 SDK。当前支持 `ad_bypass`
-## 导出特性和编辑器秘籍后门；后续接入 AdMob 时只替换 Provider。
+## 游戏主逻辑只调用这里，不直接依赖具体广告 SDK。当前支持编辑器默认后门、
+## `ad_bypass` 导出特性、Web H5 广告和移动端 AdMob Provider。
 class_name AdService
 extends RefCounted
 
@@ -10,6 +10,8 @@ signal rewarded_ad_completed(placement: String)
 signal rewarded_ad_failed(placement: String, reason: String)
 
 const DebugAdProviderScript := preload("res://scripts/ads/debug_ad_provider.gd")
+const AdmobProviderScript := preload("res://scripts/ads/admob_provider.gd")
+const WebAdProviderScript := preload("res://scripts/ads/web_ad_provider.gd")
 
 const PLACEMENT_PROP_HINT := "prop_hint"
 const PLACEMENT_PROP_UNDO := "prop_undo"
@@ -17,12 +19,20 @@ const PLACEMENT_EXTRA_STEPS := "extra_steps"
 
 var game: Node
 var debug_provider: RefCounted
+var admob_provider: RefCounted
+var web_provider: RefCounted
 var showing_rewarded_ad := false
 
 
 func _init(game_scene: Node) -> void:
 	game = game_scene
 	debug_provider = DebugAdProviderScript.new(game_scene)
+	admob_provider = AdmobProviderScript.new(game_scene)
+	admob_provider.rewarded_ad_completed.connect(_on_provider_rewarded_ad_completed)
+	admob_provider.rewarded_ad_failed.connect(_on_provider_rewarded_ad_failed)
+	web_provider = WebAdProviderScript.new(game_scene)
+	web_provider.rewarded_ad_completed.connect(_on_provider_rewarded_ad_completed)
+	web_provider.rewarded_ad_failed.connect(_on_provider_rewarded_ad_failed)
 
 
 ## 当前是否可以展示指定激励广告。
@@ -43,11 +53,6 @@ func show_rewarded(placement: String) -> bool:
 	if debug_provider.is_available():
 		return debug_provider.show_rewarded(placement)
 	return _show_real_rewarded(placement)
-
-
-## 编辑器秘籍切换广告后门，只影响当前运行会话。
-func toggle_editor_bypass() -> bool:
-	return debug_provider.toggle_editor_bypass()
 
 
 ## 测试入口：直接设置编辑器后门状态。
@@ -71,8 +76,27 @@ func _fail_rewarded_ad(placement: String, reason: String) -> bool:
 
 
 func _real_rewarded_provider_available(_placement: String) -> bool:
-	return false
+	return (web_provider != null and web_provider.is_available()) \
+		or (admob_provider != null and admob_provider.is_available())
 
 
 func _show_real_rewarded(placement: String) -> bool:
+	if web_provider != null and web_provider.show_rewarded(placement):
+		return true
+	if admob_provider != null and admob_provider.show_rewarded(placement):
+		return true
 	return _fail_rewarded_ad(placement, "rewarded provider is not configured")
+
+
+func _on_provider_rewarded_ad_completed(placement: String) -> void:
+	if not showing_rewarded_ad:
+		return
+	showing_rewarded_ad = false
+	rewarded_ad_completed.emit(placement)
+
+
+func _on_provider_rewarded_ad_failed(placement: String, reason: String) -> void:
+	if not showing_rewarded_ad:
+		return
+	showing_rewarded_ad = false
+	rewarded_ad_failed.emit(placement, reason)

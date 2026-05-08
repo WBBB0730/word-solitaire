@@ -61,20 +61,6 @@ const SOLVER_DFS_PRIORITY_JITTER := 4.0
 const SOLVER_STEP_PADDING_RATIO := 0.25
 const SOLVER_STEP_PADDING_MIN := 16
 const EXTRA_STEPS_AD_REWARD := 20
-const AD_CHEAT_SEQUENCE := [
-	KEY_UP,
-	KEY_UP,
-	KEY_DOWN,
-	KEY_DOWN,
-	KEY_LEFT,
-	KEY_RIGHT,
-	KEY_LEFT,
-	KEY_RIGHT,
-	KEY_B,
-	KEY_A,
-	KEY_B,
-	KEY_A,
-]
 const DRAG_THRESHOLD := 8.0
 const ANIM_TIME := 0.18
 const DRAW_ANIM_TIME := 0.28
@@ -94,6 +80,9 @@ const BUTTON_CLICK_SFX_PATH := "res://assets/audio/button_click.mp3"
 const USER_SETTINGS_PATH := "user://settings.cfg"
 const USER_SETTINGS_SECTION := "audio"
 const PROP_SETTINGS_SECTION := "props"
+const PROP_SETTINGS_SALT_KEY := "salt"
+const PROP_SETTINGS_CHECKSUM_KEY := "checksum"
+const PROP_SETTINGS_CHECKSUM_SECRET := "word_solitaire_props_v1"
 const SFX_PLAYER_COUNT := 4
 const BUTTON_SFX_PLAYER_COUNT := 3
 const MUSIC_BASE_VOLUME_DB := -8.0
@@ -201,8 +190,6 @@ var last_solver_found := false
 var extra_steps_ad_used := false
 ## 正在等待回调的激励广告位。非空时局内输入会暂停。
 var pending_rewarded_placement := ""
-## 编辑器广告后门秘籍的当前匹配位置。
-var ad_cheat_index := 0
 ## 是否允许运行时响应视口尺寸变化。
 var layout_resize_ready := false
 ## 尺寸变化会合并到下一帧刷新，避免拖拽窗口时连续重建 UI。
@@ -246,7 +233,6 @@ func _notification(what: int) -> void:
 
 ## 处理全局拖拽过程中的移动和松手事件。
 func _input(event: InputEvent) -> void:
-	_handle_ad_cheat_input(event)
 	if _ad_is_showing():
 		return
 	if round_transition_active:
@@ -297,31 +283,6 @@ func _init_tutorial() -> void:
 		tutorial_controller = TutorialControllerScript.new(self)
 	if tutorial_overlay == null:
 		tutorial_overlay = TutorialOverlayScript.new(self)
-
-
-## 处理编辑器专用广告后门秘籍：上上下下左右左右 B A B A。
-func _handle_ad_cheat_input(event: InputEvent) -> void:
-	if not OS.has_feature("editor"):
-		return
-	if not event is InputEventKey or not event.pressed or event.echo:
-		return
-	var keycode: int = int(event.keycode)
-	if keycode == AD_CHEAT_SEQUENCE[ad_cheat_index]:
-		ad_cheat_index += 1
-		if ad_cheat_index >= AD_CHEAT_SEQUENCE.size():
-			ad_cheat_index = 0
-			_toggle_editor_ad_bypass()
-		return
-	ad_cheat_index = 1 if keycode == AD_CHEAT_SEQUENCE[0] else 0
-
-
-## 切换编辑器广告后门，并用状态文案给轻量反馈。
-func _toggle_editor_ad_bypass() -> void:
-	if ad_service == null:
-		return
-	var enabled: bool = ad_service.toggle_editor_bypass()
-	status_text = "广告后门：" + ("开" if enabled else "关")
-	_render()
 
 
 ## 当前是否处于教学关。
@@ -1314,7 +1275,7 @@ func _add_prop_badge(parent: Button, count: int, enabled: bool) -> void:
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.size = Vector2(PROP_BADGE_SIZE, PROP_BADGE_SIZE)
 	badge.position = Vector2(parent.size.x - PROP_BADGE_SIZE * 0.70, -PROP_BADGE_SIZE * 0.36)
-	badge.z_index = parent.z_index + 1
+	badge.z_index = 1
 	var fill := Color("#e94242") if enabled else PROP_DISABLED_COLOR
 	badge.add_theme_stylebox_override("panel", _style(fill, Color.WHITE, 2, int(PROP_BADGE_SIZE * 0.5)))
 	parent.add_child(badge)
@@ -1330,7 +1291,7 @@ func _add_prop_ad_badge(parent: Button, enabled: bool) -> void:
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.size = Vector2(PROP_BADGE_SIZE, PROP_BADGE_SIZE)
 	badge.position = Vector2(parent.size.x - PROP_BADGE_SIZE * 0.70, -PROP_BADGE_SIZE * 0.36)
-	badge.z_index = parent.z_index + 1
+	badge.z_index = 1
 	var fill := Color("#4d9be8") if enabled else PROP_DISABLED_COLOR
 	badge.add_theme_stylebox_override("panel", _style(fill, Color.WHITE, 2, int(PROP_BADGE_SIZE * 0.5)))
 	parent.add_child(badge)
@@ -1367,7 +1328,7 @@ func _add_ad_play_icon(parent: Control, color: Color, pos: Vector2, size_value: 
 		pos + Vector2(0.0, size_value),
 		pos + Vector2(size_value * 0.86, size_value * 0.5),
 	])
-	icon.z_index = parent.z_index + 1
+	icon.z_index = 1
 	parent.add_child(icon)
 
 
@@ -1382,7 +1343,7 @@ func _add_ad_play_texture_icon(parent: Control, color: Color, pos: Vector2, icon
 	icon.position = pos
 	icon.size = icon_size
 	icon.modulate = color
-	icon.z_index = parent.z_index + 1
+	icon.z_index = 1
 	parent.add_child(icon)
 
 
@@ -2807,6 +2768,11 @@ func _rewarded_action_is_available(placement: String) -> bool:
 func _on_rewarded_ad_completed(placement: String) -> void:
 	if pending_rewarded_placement != placement:
 		return
+	if not _rewarded_action_is_available(placement):
+		pending_rewarded_placement = ""
+		status_text = "广告结果已过期"
+		_render()
+		return
 	pending_rewarded_placement = ""
 	if placement == AdServiceScript.PLACEMENT_PROP_HINT:
 		prop_system.add_count(PropSystemScript.PROP_HINT, 1)
@@ -2841,8 +2807,7 @@ func _load_user_settings() -> void:
 	sfx_enabled = bool(config.get_value(USER_SETTINGS_SECTION, "sfx_enabled", sfx_enabled))
 	tutorial_completed = bool(config.get_value(TutorialControllerScript.SETTINGS_SECTION, TutorialControllerScript.SETTINGS_COMPLETED_KEY, tutorial_completed))
 	if prop_system != null:
-		prop_system.set_count(PropSystemScript.PROP_HINT, int(config.get_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_HINT, prop_system.count(PropSystemScript.PROP_HINT))))
-		prop_system.set_count(PropSystemScript.PROP_UNDO, int(config.get_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_UNDO, prop_system.count(PropSystemScript.PROP_UNDO))))
+		_load_prop_inventory(config)
 
 
 ## 保存当前音频开关，下次启动自动恢复。
@@ -2852,9 +2817,47 @@ func _save_user_settings() -> void:
 	config.set_value(USER_SETTINGS_SECTION, "sfx_enabled", sfx_enabled)
 	config.set_value(TutorialControllerScript.SETTINGS_SECTION, TutorialControllerScript.SETTINGS_COMPLETED_KEY, tutorial_completed)
 	if prop_system != null:
-		config.set_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_HINT, prop_system.count(PropSystemScript.PROP_HINT))
-		config.set_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_UNDO, prop_system.count(PropSystemScript.PROP_UNDO))
+		_save_prop_inventory(config)
 	config.save(user_settings_path)
+
+
+## 从本地配置读取道具库存，并用轻量 checksum 拦截直接改数字的存档。
+func _load_prop_inventory(config: ConfigFile) -> void:
+	if not config.has_section_key(PROP_SETTINGS_SECTION, PropSystemScript.PROP_HINT) \
+			and not config.has_section_key(PROP_SETTINGS_SECTION, PropSystemScript.PROP_UNDO):
+		return
+	var hint_count := int(config.get_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_HINT, prop_system.count(PropSystemScript.PROP_HINT)))
+	var undo_count := int(config.get_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_UNDO, prop_system.count(PropSystemScript.PROP_UNDO)))
+	var salt := str(config.get_value(PROP_SETTINGS_SECTION, PROP_SETTINGS_SALT_KEY, ""))
+	var checksum := str(config.get_value(PROP_SETTINGS_SECTION, PROP_SETTINGS_CHECKSUM_KEY, ""))
+	if salt == "" or checksum != _prop_inventory_checksum(hint_count, undo_count, salt):
+		prop_system.reset_inventory()
+		return
+	prop_system.set_count(PropSystemScript.PROP_HINT, hint_count)
+	prop_system.set_count(PropSystemScript.PROP_UNDO, undo_count)
+
+
+## 保存道具库存和对应校验值。不是强安全，只是降低前端随手改存档的成功率。
+func _save_prop_inventory(config: ConfigFile) -> void:
+	var hint_count: int = prop_system.count(PropSystemScript.PROP_HINT)
+	var undo_count: int = prop_system.count(PropSystemScript.PROP_UNDO)
+	var salt := _new_prop_inventory_salt()
+	config.set_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_HINT, hint_count)
+	config.set_value(PROP_SETTINGS_SECTION, PropSystemScript.PROP_UNDO, undo_count)
+	config.set_value(PROP_SETTINGS_SECTION, PROP_SETTINGS_SALT_KEY, salt)
+	config.set_value(PROP_SETTINGS_SECTION, PROP_SETTINGS_CHECKSUM_KEY, _prop_inventory_checksum(hint_count, undo_count, salt))
+
+
+func _prop_inventory_checksum(hint_count: int, undo_count: int, salt: String) -> String:
+	var payload := "%s:%s:%d:%d" % [PROP_SETTINGS_CHECKSUM_SECRET, salt, hint_count, undo_count]
+	var hashing := HashingContext.new()
+	hashing.start(HashingContext.HASH_SHA256)
+	hashing.update(payload.to_utf8_buffer())
+	return hashing.finish().hex_encode()
+
+
+func _new_prop_inventory_salt() -> String:
+	return "%d:%d" % [Time.get_ticks_usec(), randi()]
 
 
 ## 根据当前开关状态同步实际音频播放器。

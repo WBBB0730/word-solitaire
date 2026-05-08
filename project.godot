@@ -18,6 +18,18 @@ boot_splash/bg_color=Color(0.662745, 0.843137, 0.556863, 1)
 boot_splash/show_image=false
 config/icon="res://icon.svg"
 
+[admob]
+
+is_real=false
+android_debug_application_id="ca-app-pub-3940256099942544~3347511713"
+android_real_application_id="ca-app-pub-3940256099942544~3347511713"
+android_debug_rewarded_id="ca-app-pub-3940256099942544/5224354917"
+android_real_rewarded_id="ca-app-pub-3940256099942544/5224354917"
+ios_debug_application_id="ca-app-pub-3940256099942544~1458002511"
+ios_real_application_id="ca-app-pub-3940256099942544~1458002511"
+ios_debug_rewarded_id="ca-app-pub-3940256099942544/1712485313"
+ios_real_rewarded_id="ca-app-pub-3940256099942544/1712485313"
+
 [display]
 
 window/size/viewport_width=720
@@ -25,6 +37,10 @@ window/size/viewport_height=1280
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=1
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/AdmobPlugin/plugin.cfg")
 
 [gui]
 
